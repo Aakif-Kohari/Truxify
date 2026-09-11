@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Use vi.hoisted to ensure mocks are initialized before imports
 const mockFs = vi.hoisted(() => ({
   readFileSync: vi.fn().mockReturnValue('{}'),
 }));
@@ -124,7 +123,6 @@ describe('i18n - errorTranslationInterceptor', () => {
     wrappedJson(body);
 
     expect(mockReq.t).toHaveBeenCalledWith('SERVER_ERROR', { defaultValue: 'SERVER_ERROR' });
-    // body.error is overwritten by the translated value (undefined)
     expect(body.error).toBeUndefined();
   });
 
@@ -143,5 +141,31 @@ describe('i18n - errorTranslationInterceptor', () => {
     const body2 = { error: 'ERR_2' };
     wrappedJson(body2);
     expect(body2.error).toBe('Translated');
+  });
+
+  it('handles null or undefined body passed to res.json gracefully', () => {
+    mockReq.t = vi.fn();
+    capturedOriginalJson.mockReturnValue(mockRes);
+
+    errorTranslationInterceptor(mockReq, mockRes, mockNext);
+
+    const wrappedJson = mockRes.json;
+    expect(() => wrappedJson(null)).not.toThrow();
+    expect(() => wrappedJson(undefined)).not.toThrow();
+    expect(mockReq.t).not.toHaveBeenCalled();
+  });
+
+  it('handles empty string error correctly', () => {
+    mockReq.t = vi.fn().mockReturnValue('Empty Error Translated');
+    capturedOriginalJson.mockReturnValue(mockRes);
+
+    errorTranslationInterceptor(mockReq, mockRes, mockNext);
+
+    const wrappedJson = mockRes.json;
+    const body = { error: '' };
+    wrappedJson(body);
+
+    expect(mockReq.t).toHaveBeenCalledWith('', { defaultValue: '' });
+    expect(body.error).toBe('Empty Error Translated');
   });
 });
