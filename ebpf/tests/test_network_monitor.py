@@ -33,6 +33,79 @@ def _source():
         return fh.read()
 
 
+def _strip_comments_and_strings(code):
+    """Remove C comments and string/character literals to prevent false positives."""
+    pattern = r'("(?:\\.|[^"\\])*")|(\'(?:\\.|[^\'\\])*\')|(/\*.*?\*/)|(//.*?$)'
+
+    def replace(match):
+        if match.group(3) or match.group(4):
+            return " "
+        if match.group(1) or match.group(2):
+            return " "
+        return match.group(0)
+
+    return re.sub(pattern, replace, code, flags=re.MULTILINE | re.DOTALL)
+
+
+def _extract_function_body(source, func_name="trace_tcp_connect"):
+    """
+    Extract the complete function body for func_name using brace matching.
+    Correctly ignores braces inside strings, character literals, and comments.
+    """
+    pattern = rf"\b{re.escape(func_name)}\s*\([^)]*\)\s*\{{"
+    match = re.search(pattern, source)
+    if not match:
+        raise ValueError(f"Function {func_name} definition not found")
+
+    start_pos = match.end()
+    depth = 1
+    i = start_pos
+    n = len(source)
+
+    while i < n and depth > 0:
+        ch = source[i]
+        # Skip single-line comments
+        if ch == "/" and i + 1 < n and source[i + 1] == "/":
+            nl = source.find("\n", i + 2)
+            i = nl if nl != -1 else n
+            continue
+        # Skip multi-line comments
+        if ch == "/" and i + 1 < n and source[i + 1] == "*":
+            end_comment = source.find("*/", i + 2)
+            i = end_comment + 2 if end_comment != -1 else n
+            continue
+        # Skip string literals
+        if ch == '"':
+            i += 1
+            while i < n and source[i] != '"':
+                if source[i] == "\\" and i + 1 < n:
+                    i += 2
+                else:
+                    i += 1
+            i += 1
+            continue
+        # Skip character literals
+        if ch == "'":
+            i += 1
+            while i < n and source[i] != "'":
+                if source[i] == "\\" and i + 1 < n:
+                    i += 2
+                else:
+                    i += 1
+            i += 1
+            continue
+        # Track brace nesting
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start_pos:i]
+        i += 1
+
+    raise ValueError(f"Unmatched braces encountered in function {func_name}")
+
+
 def _get_critical_sections(source):
     """Find all code blocks between bpf_spin_lock and bpf_spin_unlock."""
     pattern = r"bpf_spin_lock\s*\([^)]*\)\s*;(.*?)bpf_spin_unlock\s*\([^)]*\)\s*;"
@@ -59,38 +132,34 @@ def test_no_helpers_inside_spin_lock_critical_section():
     sections = _get_critical_sections(source)
     assert len(sections) > 0, "Expected at least one bpf_spin_lock critical section"
 
-    # Known BPF helpers that must never be called while holding a bpf_spin_lock
-    forbidden_helpers = [
-        "bpf_ringbuf_output",
-        "bpf_ringbuf_reserve",
-        "bpf_ringbuf_submit",
-        "bpf_printk",
-        "bpf_trace_printk",
-        "bpf_ktime_get_ns",
-        "bpf_map_lookup_elem",
-        "bpf_map_update_elem",
-        "bpf_map_delete_elem",
-        "bpf_probe_read",
-        "bpf_probe_read_user",
-        "bpf_probe_read_kernel",
-    ]
-
+    # Generic check: NO BPF helper call may occur between bpf_spin_lock() and bpf_spin_unlock().
+    # Detect any BPF helper call syntax: bpf_<helper_name>(
     for section in sections:
-        for helper in forbidden_helpers:
-            assert helper not in section, (
-                f"Forbidden helper call '{helper}' found inside bpf_spin_lock "
-                f"critical section: {section.strip()}"
-            )
+        cleaned = _strip_comments_and_strings(section)
+        helper_calls = re.findall(r"\bbpf_([a-zA-Z0-9_]+)\s*\(", cleaned)
+        assert not helper_calls, (
+            f"Forbidden BPF helper call(s) {helper_calls} found inside bpf_spin_lock "
+            f"critical section:\n{section.strip()}"
+        )
 
 
 def test_ringbuf_output_and_printk_called_after_unlock():
     source = _source()
-    # Locate trace_tcp_connect function
-    func_match = re.search(
-        r"int\s+trace_tcp_connect\s*\([^)]*\)\s*\{(.*?)\n\}", source, re.DOTALL
+    body = _extract_function_body(source, "trace_tcp_connect")
+
+    # The extracted body must actually include the spin lock, unlock, and helper calls
+    assert "bpf_spin_lock(&entry->lock);" in body, (
+        "bpf_spin_lock(&entry->lock) not found in extracted trace_tcp_connect body"
     )
-    assert func_match is not None, "trace_tcp_connect function not found"
-    body = func_match.group(1)
+    assert "bpf_spin_unlock(&entry->lock);" in body, (
+        "bpf_spin_unlock(&entry->lock) not found in extracted trace_tcp_connect body"
+    )
+    assert "bpf_ringbuf_output(" in body, (
+        "bpf_ringbuf_output not found in extracted trace_tcp_connect body"
+    )
+    assert "bpf_printk(" in body, (
+        "bpf_printk not found in extracted trace_tcp_connect body"
+    )
 
     unlock_pos = body.find("bpf_spin_unlock(&entry->lock);")
     ringbuf_pos = body.find("bpf_ringbuf_output(&rate_events")
@@ -112,22 +181,30 @@ def test_ringbuf_output_and_printk_called_after_unlock():
 
 def test_rate_limiting_semantics_preserved():
     source = _source()
-    # Critical section must still maintain the rate-limit window checks and updates
-    assert "now - entry->last_seen < RATE_LIMIT_WINDOW_NS" in source
-    assert "entry->count >= MAX_CONNS_PER_WINDOW" in source
-    assert "entry->count++" in source
-    assert "entry->last_seen = now" in source
-    assert "entry->count = 1" in source
+    sections = _get_critical_sections(source)
+    assert len(sections) >= 1, "Expected at least one bpf_spin_lock critical section"
+    cs = sections[0]
+
+    # Verify the critical section extractor captures the complete lock/unlock section
+    # and maintains the rate-limit window checks, counter updates, and state changes
+    assert "now - entry->last_seen < RATE_LIMIT_WINDOW_NS" in cs
+    assert "entry->count >= MAX_CONNS_PER_WINDOW" in cs
+    assert "rate_limited = 1" in cs
+    assert "entry->count++" in cs
+    assert "entry->last_seen = now" in cs
+    assert "entry->count = 1" in cs
 
 
 def test_event_data_captured_for_ringbuf():
     source = _source()
-    # Event structure and fields must be populated and passed to ringbuf
-    assert "struct drop_event ev" in source
-    assert "ev.daddr = rk.daddr" in source
-    assert "ev.dport = rk.dport" in source
-    assert "ev.ts = now" in source
-    assert "bpf_ringbuf_output(&rate_events, &ev, sizeof(ev), 0)" in source
+    body = _extract_function_body(source, "trace_tcp_connect")
+
+    # Event structure and fields must be populated and passed to ringbuf inside trace_tcp_connect
+    assert "struct drop_event ev" in body
+    assert "ev.daddr = rk.daddr" in body
+    assert "ev.dport = rk.dport" in body
+    assert "ev.ts = now" in body
+    assert "bpf_ringbuf_output(&rate_events, &ev, sizeof(ev), 0)" in body
 
 
 if __name__ == "__main__":
