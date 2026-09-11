@@ -39,6 +39,28 @@ function getAssignmentTimestamp(issue, timeline = []) {
 }
 
 /**
+ * Checks if any assigned contributor posted a comment or activity in the last daysThreshold days.
+ */
+function hasRecentContributorActivity(issue, timeline = [], now = Date.now(), daysThreshold = 7) {
+  const assigneeLogins = new Set((issue.assignees || []).map(a => a.login.toLowerCase()));
+
+  return timeline.some(event => {
+    const author = (event.actor && event.actor.login) ||
+                   (event.user && event.user.login);
+    if (!author || !assigneeLogins.has(author.toLowerCase())) return false;
+
+    // Count comments, reviews, or commits by contributor
+    if (event.event && !['commented', 'committed', 'reviewed', 'line-commented'].includes(event.event)) {
+      return false;
+    }
+
+    const eventTime = new Date(event.created_at).getTime();
+    const daysSinceEvent = (now - eventTime) / (1000 * 60 * 60 * 24);
+    return daysSinceEvent < daysThreshold;
+  });
+}
+
+/**
  * Evaluates whether an issue meets the criteria to be auto-unassigned.
  */
 function isEligibleForUnassign({
@@ -46,47 +68,48 @@ function isEligibleForUnassign({
   timeline = [],
   searchItems = [],
   now = Date.now(),
-  daysThreshold = 7,
-  mode = 'no_pr'
+  daysThreshold = 7
 }) {
   if (!issue || issue.pull_request || !issue.assignees || issue.assignees.length === 0) {
     return { eligible: false, reason: 'no-assignees-or-pr' };
   }
 
+  // 1. If assigned less than 1 week (daysThreshold), do NOT unassign
   const assignedAt = getAssignmentTimestamp(issue, timeline);
   const daysSinceAssigned = (now - assignedAt) / (1000 * 60 * 60 * 24);
 
-  const updatedAt = new Date(issue.updated_at || issue.created_at).getTime();
-  const daysSinceUpdate = (now - updatedAt) / (1000 * 60 * 60 * 24);
+  if (daysSinceAssigned < daysThreshold) {
+    return {
+      eligible: false,
+      reason: 'assigned-recently',
+      daysSinceAssigned,
+      daysThreshold
+    };
+  }
 
+  // 2. If a linked PR exists, do NOT unassign
   const hasPR = hasLinkedPullRequest(issue.number, timeline, searchItems);
   if (hasPR) {
     return {
       eligible: false,
       reason: 'pr-exists',
-      daysSinceAssigned,
-      daysSinceUpdate
+      daysSinceAssigned
     };
   }
 
-  const meetsThreshold = mode === 'no_pr_or_inactive'
-    ? (daysSinceAssigned >= daysThreshold || daysSinceUpdate >= daysThreshold)
-    : (daysSinceAssigned >= daysThreshold);
-
-  if (!meetsThreshold) {
+  // 3. If contributor has commented or provided updates in the last daysThreshold days, do NOT unassign
+  const hasContributorComment = hasRecentContributorActivity(issue, timeline, now, daysThreshold);
+  if (hasContributorComment) {
     return {
       eligible: false,
-      reason: 'under-threshold',
-      daysSinceAssigned,
-      daysSinceUpdate,
-      daysThreshold
+      reason: 'recent-contributor-comment',
+      daysSinceAssigned
     };
   }
 
   return {
     eligible: true,
     daysSinceAssigned,
-    daysSinceUpdate,
     assignees: issue.assignees.map(a => a.login)
   };
 }
@@ -323,6 +346,7 @@ if (require.main === module) {
 module.exports = {
   hasLinkedPullRequest,
   getAssignmentTimestamp,
+  hasRecentContributorActivity,
   isEligibleForUnassign,
   createFetchOctokit,
   run

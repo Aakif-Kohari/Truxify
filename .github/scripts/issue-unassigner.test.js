@@ -81,7 +81,7 @@ test('isEligibleForUnassign returns ineligible if assigned under 7 days ago', ()
   });
 
   assert.equal(result.eligible, false);
-  assert.equal(result.reason, 'under-threshold');
+  assert.equal(result.reason, 'assigned-recently');
 });
 
 test('isEligibleForUnassign returns ineligible if a PR already exists', () => {
@@ -267,26 +267,57 @@ test('run function in dryRun mode does not modify issues', async () => {
   assert.equal(modified, false);
 });
 
-test('isEligibleForUnassign supports mode: no_pr_or_inactive when no updates for 7 days', () => {
+test('isEligibleForUnassign does not unassign if contributor commented in the last 7 days', () => {
   const now = new Date('2026-09-15T00:00:00Z').getTime();
   const issue = {
     number: 103,
-    created_at: '2026-09-12T00:00:00Z', // created 3 days ago
-    updated_at: '2026-09-01T00:00:00Z', // no updates for 14 days
+    created_at: '2026-08-01T00:00:00Z',
     assignees: [{ login: 'testuser' }]
   };
-  const timeline = [{ event: 'assigned', created_at: '2026-09-12T00:00:00Z' }];
+  // Assigned 20 days ago, but contributor commented 2 days ago
+  const timeline = [
+    { event: 'assigned', created_at: '2026-08-25T00:00:00Z' },
+    {
+      event: 'commented',
+      actor: { login: 'testuser' },
+      created_at: '2026-09-13T00:00:00Z'
+    }
+  ];
 
   const result = isEligibleForUnassign({
     issue,
     timeline,
     searchItems: [],
     now,
-    daysThreshold: 7,
-    mode: 'no_pr_or_inactive'
+    daysThreshold: 7
   });
 
-  assert.equal(result.eligible, true);
+  assert.equal(result.eligible, false);
+  assert.equal(result.reason, 'recent-contributor-comment');
+});
+
+test('isEligibleForUnassign does not unassign if assigned less than 1 week ago', () => {
+  const now = new Date('2026-09-15T00:00:00Z').getTime();
+  const issue = {
+    number: 104,
+    created_at: '2026-08-01T00:00:00Z',
+    assignees: [{ login: 'testuser' }]
+  };
+  // Assigned 3 days ago (< 7 days)
+  const timeline = [
+    { event: 'assigned', created_at: '2026-09-12T00:00:00Z' }
+  ];
+
+  const result = isEligibleForUnassign({
+    issue,
+    timeline,
+    searchItems: [],
+    now,
+    daysThreshold: 7
+  });
+
+  assert.equal(result.eligible, false);
+  assert.equal(result.reason, 'assigned-recently');
 });
 
 test('createFetchOctokit returns an object with paginate and rest methods', () => {
