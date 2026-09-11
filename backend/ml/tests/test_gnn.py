@@ -5,12 +5,16 @@ torch_geometric = pytest.importorskip("torch_geometric")
 from gnn.models import RouteGNN, GNNRouteModel, GraphNetworkBuilder, RouteOptimizer
 
 class TestGNNModel:
+    """Test suite for GNN route model initialization and forward operations."""
+
     def test_route_gnn_init(self):
+        """Verify backward-compatible RouteGNN initialization with channel aliases."""
         model = RouteGNN(in_channels=10, hidden_channels=32, out_channels=2)
         assert model is not None
         assert hasattr(model, 'forward')
 
     def test_forward_with_edge_attributes(self):
+        """Verify GNNRouteModel forward pass consumes edge attributes."""
         model = GNNRouteModel(input_dim=9, hidden_dim=16, output_dim=8, edge_dim=5)
         model.eval()
         x = torch.randn(4, 9)
@@ -21,8 +25,11 @@ class TestGNNModel:
         assert out is not None
 
 class TestRouteOptimizer:
+    """Test suite for constrained route optimization algorithms."""
+
     @pytest.fixture
     def sample_network(self):
+        """Build sample road network with multi-attribute edges and constraints."""
         builder = GraphNetworkBuilder()
         nodes = [
             {'id': 'A', 'lat': 12.97, 'lng': 77.59, 'traffic': 20, 'road_type': 'highway', 'speed_limit': 80},
@@ -41,6 +48,7 @@ class TestRouteOptimizer:
         return builder, graph_data
 
     def test_optimize_route_success(self, sample_network):
+        """Verify successful constrained pathfinding returns valid metrics and reached destination."""
         _, graph_data = sample_network
         optimizer = RouteOptimizer()
         result = optimizer.optimize_route('A', 'C', graph_data)
@@ -53,53 +61,95 @@ class TestRouteOptimizer:
         assert result['total_distance'] > 0
         assert result['total_time'] > 0
 
-    def test_optimize_route_disconnected_returns_none(self, sample_network):
-        """Verify unreachable / disconnected destination returns None instead of partial route"""
+    def test_optimize_route_zero_hop(self, sample_network):
+        """Verify start == end produces a successful zero-hop route with 1 node visited."""
         _, graph_data = sample_network
         optimizer = RouteOptimizer()
-        # Node D_isolated has no edges connecting to A
+        result = optimizer.optimize_route('A', 'A', graph_data)
+
+        assert result is not None
+        assert result.get('success') is True
+        assert result['route'] == []
+        assert result['nodes_visited'] == 1
+        assert result['total_distance'] == 0
+        assert result['total_time'] == 0
+
+    def test_optimize_route_disconnected_returns_none(self, sample_network):
+        """Verify unreachable / disconnected destination returns None instead of partial route."""
+        _, graph_data = sample_network
+        optimizer = RouteOptimizer()
         result = optimizer.optimize_route('A', 'D_isolated', graph_data)
         assert result is None
 
     def test_optimize_route_missing_node(self, sample_network):
+        """Verify non-existent nodes cleanly return None."""
         _, graph_data = sample_network
         optimizer = RouteOptimizer()
         result = optimizer.optimize_route('A', 'NON_EXISTENT_NODE', graph_data)
         assert result is None
 
     def test_optimize_route_hazmat_constraint(self, sample_network):
-        """Direct path A-C is faster than A-B-C, but forbids hazmat"""
+        """Verify hazmat constraint bypasses restricted direct edge and selects compliant path."""
         _, graph_data = sample_network
         optimizer = RouteOptimizer()
 
-        # Without hazmat constraint, A-C could be evaluated
-        # With hazmat constraint, A-C must be bypassed, using A -> B -> C
         result = optimizer.optimize_route('A', 'C', graph_data, constraints={'hazmat': True})
         assert result is not None
         assert result['success'] is True
         assert result['route'][-1]['to'] == 'C'
-        # Must take A -> B -> C because A -> C forbids hazmat
         hops = [(r['from'], r['to']) for r in result['route']]
         assert ('A', 'B') in hops
         assert ('B', 'C') in hops
 
     def test_optimize_route_weight_constraint(self, sample_network):
+        """Verify excessive truck weight exceeding all route limits returns None."""
         _, graph_data = sample_network
         optimizer = RouteOptimizer()
 
-        # Both paths have max_weight <= 40.0. A truck of 50.0 tons exceeds all routes
         result = optimizer.optimize_route('A', 'C', graph_data, constraints={'truck_weight': 50.0})
         assert result is None
 
     def test_optimize_route_hos_time_constraint(self, sample_network):
+        """Verify HOS time limit rejects paths that exceed maximum allowed time."""
         _, graph_data = sample_network
         optimizer = RouteOptimizer()
 
-        # Total time is >= 25 mins. A max_time of 10 mins must fail
         result = optimizer.optimize_route('A', 'C', graph_data, constraints={'hos_limit': 10.0})
         assert result is None
 
+    def test_optimize_route_hos_finds_feasible_alternate_path(self):
+        """Verify HOS search pruning discovers feasible alternate path when primary path is too slow."""
+        builder = GraphNetworkBuilder()
+        nodes = [
+            {'id': 'S', 'lat': 10.0, 'lng': 20.0, 'traffic': 0, 'road_type': 'highway', 'speed_limit': 80},
+            {'id': 'M1', 'lat': 10.1, 'lng': 20.1, 'traffic': 0, 'road_type': 'highway', 'speed_limit': 80},
+            {'id': 'M2', 'lat': 10.2, 'lng': 20.2, 'traffic': 0, 'road_type': 'highway', 'speed_limit': 80},
+            {'id': 'E', 'lat': 10.3, 'lng': 20.3, 'traffic': 0, 'road_type': 'highway', 'speed_limit': 80}
+        ]
+        edges = [
+            # Cheap route S -> M1 -> E: cost 10, but time 80 (violates HOS=50)
+            {'source': 'S', 'target': 'M1', 'distance': 40.0, 'time': 40.0, 'cost': 5.0, 'fuel': 2.0},
+            {'source': 'M1', 'target': 'E', 'distance': 40.0, 'time': 40.0, 'cost': 5.0, 'fuel': 2.0},
+            # Faster route S -> M2 -> E: cost 50, but time 30 (satisfies HOS=50)
+            {'source': 'S', 'target': 'M2', 'distance': 15.0, 'time': 15.0, 'cost': 25.0, 'fuel': 5.0},
+            {'source': 'M2', 'target': 'E', 'distance': 15.0, 'time': 15.0, 'cost': 25.0, 'fuel': 5.0},
+        ]
+        builder.build_road_network(nodes, edges)
+        graph_data = builder.get_pytorch_data()
+
+        optimizer = RouteOptimizer()
+        result = optimizer.optimize_route('S', 'E', graph_data, objectives=['cost'], constraints={'hos_limit': 50.0})
+        assert result is not None
+        assert result['success'] is True
+        assert result['route'][-1]['to'] == 'E'
+        assert result['total_time'] <= 50.0
+        # Selected the faster M2 alternate
+        hops = [(r['from'], r['to']) for r in result['route']]
+        assert ('S', 'M2') in hops
+        assert ('M2', 'E') in hops
+
     def test_multi_objective_optimization(self, sample_network):
+        """Verify Pareto multi-objective selection finds optimal balanced route."""
         _, graph_data = sample_network
         optimizer = RouteOptimizer()
         result = optimizer.multi_objective_optimization('A', 'C', graph_data)
@@ -108,6 +158,7 @@ class TestRouteOptimizer:
         assert result['route'][-1]['to'] == 'C'
 
     def test_multi_objective_optimization_unreachable(self, sample_network):
+        """Verify multi-objective optimization returns None for unreachable targets."""
         _, graph_data = sample_network
         optimizer = RouteOptimizer()
         result = optimizer.multi_objective_optimization('A', 'D_isolated', graph_data)

@@ -1,28 +1,27 @@
+import heapq
+from datetime import datetime
+import logging
+import networkx as nx
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, GATConv, SAGEConv, global_mean_pool
 from torch_geometric.data import Data, DataLoader
-import numpy as np
-import networkx as nx
-from datetime import datetime
-import logging
+from torch_geometric.nn import GATConv, GCNConv, SAGEConv, global_mean_pool
 
 logger = logging.getLogger(__name__)
 
-# True per-node feature dimension produced by `extract_features` (lat, lng,
-# traffic, 5-element road-type one-hot, speed_limit -> 9 features). The GNN
-# True per-node feature dimension produced by `extract_features` (lat, lng,
-# traffic, 5-element road-type one-hot, speed_limit -> 9 features). The GNN
-# conv layers must consume this dimension or `data.x` raises a size mismatch.
+# Per-node feature dimension produced by `extract_features` (lat, lng,
+# traffic, 5-element road-type one-hot, speed_limit -> 9 features).
 GNN_NODE_FEATURE_DIM = 9
 GNN_EDGE_FEATURE_DIM = 5
 
 class GNNRouteModel(nn.Module):
-    """Graph Neural Network for Route Optimization"""
+    """Graph Neural Network for Route Optimization."""
     
     def __init__(self, input_dim=GNN_NODE_FEATURE_DIM, hidden_dim=128, output_dim=32, edge_dim=GNN_EDGE_FEATURE_DIM,
                  in_channels=None, hidden_channels=None, out_channels=None):
+        """Initialize GNN route model layers, dimensions, and attention."""
         super(GNNRouteModel, self).__init__()
         if in_channels is not None:
             input_dim = in_channels
@@ -61,6 +60,7 @@ class GNNRouteModel(nn.Module):
         logger.info("✅ GNN Route Model initialized")
     
     def forward(self, x, edge_index, edge_attr=None, batch=None):
+        """Execute forward pass through GNN convolution, attention, and pooling layers."""
         # First GCN layer
         x = self.conv1(x, edge_index)
         x = F.relu(x)
@@ -99,9 +99,10 @@ class GNNRouteModel(nn.Module):
 RouteGNN = GNNRouteModel
 
 class GraphNetworkBuilder:
-    """Build road network graphs for GNN"""
+    """Build road network graphs for GNN."""
     
     def __init__(self):
+        """Initialize empty road network graph and feature mappings."""
         self.graph = nx.Graph()
         self.node_features = {}
         self.edge_features = {}
@@ -198,6 +199,7 @@ class RouteOptimizer:
     """GNN-based Route Optimizer"""
     
     def __init__(self, model_path=None):
+        """Initialize RouteOptimizer with GNNRouteModel and hardware acceleration device."""
         self.model = None
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
@@ -209,7 +211,7 @@ class RouteOptimizer:
         logger.info(f"✅ Route Optimizer initialized on {self.device}")
     
     def optimize_route(self, start_node, end_node, graph_data, objectives=['time', 'cost', 'fuel'], constraints=None):
-        """Optimize route using GNN and constrained Dijkstra pathfinding"""
+        """Optimize route using GNN and constrained Dijkstra pathfinding."""
         try:
             # Convert to PyTorch Geometric
             data = graph_data.to(self.device)
@@ -234,8 +236,8 @@ class RouteOptimizer:
                 constraints
             )
             
-            # Strict reachability verification: route must reach the end_node
-            if not route or route[-1]['to'] != end_node:
+            # Strict reachability verification: accept empty route for zero-hop (start == end)
+            if route is None or (start_node != end_node and (not route or route[-1]['to'] != end_node)):
                 logger.warning(f"No complete route found from {start_node} to {end_node}")
                 return None
 
@@ -246,7 +248,7 @@ class RouteOptimizer:
                 'total_time': sum(r.get('time', 0) for r in route),
                 'total_cost': sum(r.get('cost', 0) for r in route),
                 'total_fuel': sum(r.get('fuel', 0) for r in route),
-                'nodes_visited': len(route) + 1,
+                'nodes_visited': 1 if start_node == end_node else len(route) + 1,
                 'timestamp': datetime.now().isoformat()
             }
             
@@ -255,7 +257,7 @@ class RouteOptimizer:
             return None
     
     def _find_optimal_route(self, start, end, embeddings, graph_data, objectives, constraints=None):
-        """Find optimal route using Dijkstra with GNN embeddings and constraint enforcement"""
+        """Find optimal route using constrained shortest path with GNN heuristics and HOS limits."""
         if not hasattr(graph_data, 'graph'):
             logger.warning("graph_data has no graph attribute")
             return None
@@ -290,35 +292,62 @@ class RouteOptimizer:
 
             return self._calculate_score(embeddings, u, v, objectives, graph_data, node_map)
 
-        try:
-            path = nx.dijkstra_path(graph_data.graph, start, end, weight=weight_func)
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            logger.warning(f"No feasible path found from {start} to {end}")
-            return None
+        max_time = constraints.get('max_time') or constraints.get('hos_limit')
+        path = None
+
+        if max_time is not None:
+            # Constrained shortest path: track cumulative elapsed time in priority queue
+            # to prune paths exceeding max_time and explore feasible alternate routes
+            pq = [(0.0, 0.0, start, [start])]
+            best_state = {}
+
+            while pq:
+                curr_score, curr_time, u, u_path = heapq.heappop(pq)
+
+                if u == end:
+                    path = u_path
+                    break
+
+                if u in best_state:
+                    prev_score, prev_time = best_state[u]
+                    if curr_score >= prev_score and curr_time >= prev_time:
+                        continue
+                best_state[u] = (curr_score, curr_time)
+
+                for v in graph_data.graph.neighbors(u):
+                    if v in u_path:
+                        continue
+                    edge_attrs = graph_data.graph[u][v]
+                    edge_weight = weight_func(u, v, edge_attrs)
+                    if edge_weight is None:
+                        continue
+
+                    edge_time = float(edge_attrs.get('time', 0))
+                    new_time = curr_time + edge_time
+                    if new_time > max_time:
+                        continue
+
+                    new_score = curr_score + edge_weight
+                    heapq.heappush(pq, (new_score, new_time, v, u_path + [v]))
+        else:
+            try:
+                path = nx.dijkstra_path(graph_data.graph, start, end, weight=weight_func)
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                logger.warning(f"No feasible path found from {start} to {end}")
+                return None
 
         if not path or len(path) < 2:
             return None
 
         route = []
-        total_time = 0
-        max_time = constraints.get('max_time') or constraints.get('hos_limit')
-
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
             edge_data = graph_data.graph[u][v]
-            edge_time = edge_data.get('time', 0)
-            total_time += edge_time
-
-            # Hours of Service (HOS) / max transit time constraint
-            if max_time is not None and total_time > max_time:
-                logger.warning(f"Route violates HOS/time constraint ({total_time} > {max_time})")
-                return None
-
             route.append({
                 'from': u,
                 'to': v,
                 'distance': edge_data.get('distance', 0),
-                'time': edge_time,
+                'time': edge_data.get('time', 0),
                 'cost': edge_data.get('cost', 0),
                 'fuel': edge_data.get('fuel', 0),
                 'congestion': edge_data.get('congestion', 0)
@@ -327,7 +356,7 @@ class RouteOptimizer:
         return route
     
     def _calculate_score(self, embeddings, current, neighbor, objectives, graph_data, node_map=None):
-        """Calculate route score using GNN embeddings and edge attributes"""
+        """Calculate route score using GNN embeddings and selected edge objectives."""
         score = 0.0
         edge_data = graph_data.graph[current][neighbor]
         
@@ -342,11 +371,6 @@ class RouteOptimizer:
         for obj in objectives:
             if obj in edge_data:
                 score += weights.get(obj, 1.0) * float(edge_data[obj])
-        
-        # Factor in congestion
-        congestion = edge_data.get('congestion', 0)
-        if congestion:
-            score += weights.get('congestion', 2.0) * float(congestion)
 
         # Add embedding distance heuristic
         if node_map is None:
