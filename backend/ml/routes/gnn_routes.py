@@ -32,6 +32,9 @@ class Edge(BaseModel):
     cost: Optional[float] = 0
     fuel: Optional[float] = 0
     congestion: Optional[float] = 0
+    hazmat_allowed: Optional[bool] = True
+    max_weight: Optional[float] = None
+    max_height: Optional[float] = None
 
 class RouteRequest(BaseModel):
     start_node: str
@@ -39,6 +42,7 @@ class RouteRequest(BaseModel):
     nodes: List[Node]
     edges: List[Edge]
     objectives: Optional[List[str]] = ["time", "cost", "fuel"]
+    constraints: Optional[Dict[str, Any]] = None
 
 class TrainRequest(BaseModel):
     epochs: int = 100
@@ -86,7 +90,8 @@ async def optimize_route(request: RouteRequest):
             request.start_node,
             request.end_node,
             graph_data,
-            request.objectives
+            request.objectives,
+            request.constraints
         )
         
         if result:
@@ -122,14 +127,22 @@ async def multi_objective_optimize(request: RouteRequest):
         result = optimizer.multi_objective_optimization(
             request.start_node,
             request.end_node,
-            graph_data
+            graph_data,
+            request.constraints
         )
         
-        return {
-            'success': True,
-            'data': result,
-            'timestamp': datetime.now().isoformat()
-        }
+        if result:
+            return {
+                'success': True,
+                'data': result,
+                'timestamp': datetime.now().isoformat()
+            }
+        else:
+            return {
+                'success': False,
+                'error': 'Multi-objective route optimization failed',
+                'timestamp': datetime.now().isoformat()
+            }
     except Exception as e:
         logger.error(f"Multi-objective optimization failed: {e}")
         logger.error(f"Internal error: {e}")

@@ -12,18 +12,36 @@ logger = logging.getLogger(__name__)
 
 # True per-node feature dimension produced by `extract_features` (lat, lng,
 # traffic, 5-element road-type one-hot, speed_limit -> 9 features). The GNN
+# True per-node feature dimension produced by `extract_features` (lat, lng,
+# traffic, 5-element road-type one-hot, speed_limit -> 9 features). The GNN
 # conv layers must consume this dimension or `data.x` raises a size mismatch.
 GNN_NODE_FEATURE_DIM = 9
+GNN_EDGE_FEATURE_DIM = 5
 
 class GNNRouteModel(nn.Module):
     """Graph Neural Network for Route Optimization"""
     
-    def __init__(self, input_dim=GNN_NODE_FEATURE_DIM, hidden_dim=128, output_dim=32):
+    def __init__(self, input_dim=GNN_NODE_FEATURE_DIM, hidden_dim=128, output_dim=32, edge_dim=GNN_EDGE_FEATURE_DIM,
+                 in_channels=None, hidden_channels=None, out_channels=None):
         super(GNNRouteModel, self).__init__()
+        if in_channels is not None:
+            input_dim = in_channels
+        if hidden_channels is not None:
+            hidden_dim = hidden_channels
+        if out_channels is not None:
+            output_dim = out_channels
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.edge_dim = edge_dim
         
         # Graph convolution layers
         self.conv1 = GCNConv(input_dim, hidden_dim)
-        self.conv2 = GATConv(hidden_dim, hidden_dim, heads=4, concat=True)
+        if edge_dim:
+            self.conv2 = GATConv(hidden_dim, hidden_dim, heads=4, concat=True, edge_dim=edge_dim)
+        else:
+            self.conv2 = GATConv(hidden_dim, hidden_dim, heads=4, concat=True)
         self.conv3 = SAGEConv(hidden_dim * 4, hidden_dim)
         
         # Attention mechanism
@@ -49,8 +67,13 @@ class GNNRouteModel(nn.Module):
         x = self.bn1(x)
         x = self.dropout(x)
         
-        # Second GAT layer
-        x = self.conv2(x, edge_index)
+        # Second GAT layer with edge attributes
+        if getattr(self, 'edge_dim', None) is not None:
+            if edge_attr is None:
+                edge_attr = torch.zeros((edge_index.size(1), self.edge_dim), dtype=torch.float, device=x.device)
+            x = self.conv2(x, edge_index, edge_attr=edge_attr)
+        else:
+            x = self.conv2(x, edge_index)
         x = F.relu(x)
         x = self.bn2(x)
         x = self.dropout(x)
@@ -71,6 +94,9 @@ class GNNRouteModel(nn.Module):
         x = self.lin2(x)
         
         return x.squeeze()
+
+# Backward-compatibility alias
+RouteGNN = GNNRouteModel
 
 class GraphNetworkBuilder:
     """Build road network graphs for GNN"""
@@ -102,7 +128,10 @@ class GraphNetworkBuilder:
                 time=edge['time'],
                 cost=edge.get('cost', 0),
                 fuel=edge.get('fuel', 0),
-                congestion=edge.get('congestion', 0)
+                congestion=edge.get('congestion', 0),
+                hazmat_allowed=edge.get('hazmat_allowed', True),
+                max_weight=edge.get('max_weight'),
+                max_height=edge.get('max_height')
             )
             
         return self.graph
@@ -121,7 +150,7 @@ class GraphNetworkBuilder:
                 data.get('lat', 0),
                 data.get('lng', 0),
                 data.get('traffic', 0) / 100,
-                self._road_type_encoding(data.get('road_type', 'local')),
+                *self._road_type_encoding(data.get('road_type', 'local')),
                 data.get('speed_limit', 50) / 100
             ]
             node_features.append(features)
@@ -179,15 +208,15 @@ class RouteOptimizer:
         
         logger.info(f"✅ Route Optimizer initialized on {self.device}")
     
-    def optimize_route(self, start_node, end_node, graph_data, objectives=['time', 'cost', 'fuel']):
-        """Optimize route using GNN"""
+    def optimize_route(self, start_node, end_node, graph_data, objectives=['time', 'cost', 'fuel'], constraints=None):
+        """Optimize route using GNN and constrained Dijkstra pathfinding"""
         try:
             # Convert to PyTorch Geometric
             data = graph_data.to(self.device)
 
             # Validate the node-feature dimension matches the model before the
             # GCN conv layers run (otherwise Linear raises a cryptic size mismatch).
-            if data.x.shape[1] != self.model.input_dim:
+            if hasattr(self.model, 'input_dim') and data.x.shape[1] != self.model.input_dim:
                 raise ValueError(
                     f"Node feature dim mismatch: model expects {self.model.input_dim}, got {data.x.shape[1]}"
                 )
@@ -196,21 +225,28 @@ class RouteOptimizer:
             with torch.no_grad():
                 embeddings = self.model(data.x, data.edge_index, data.edge_attr)
             
-            # Find optimal route using embeddings
+            # Find optimal route using embeddings and constraints
             route = self._find_optimal_route(
                 start_node, end_node, 
-                embeddings.cpu().numpy(),
+                embeddings.cpu().numpy() if hasattr(embeddings, 'cpu') else np.array(embeddings),
                 graph_data,
-                objectives
+                objectives,
+                constraints
             )
             
+            # Strict reachability verification: route must reach the end_node
+            if not route or route[-1]['to'] != end_node:
+                logger.warning(f"No complete route found from {start_node} to {end_node}")
+                return None
+
             return {
+                'success': True,
                 'route': route,
                 'total_distance': sum(r.get('distance', 0) for r in route),
                 'total_time': sum(r.get('time', 0) for r in route),
                 'total_cost': sum(r.get('cost', 0) for r in route),
                 'total_fuel': sum(r.get('fuel', 0) for r in route),
-                'nodes_visited': len(route),
+                'nodes_visited': len(route) + 1,
                 'timestamp': datetime.now().isoformat()
             }
             
@@ -218,82 +254,115 @@ class RouteOptimizer:
             logger.error(f"Route optimization failed: {e}")
             return None
     
-    def _find_optimal_route(self, start, end, embeddings, graph_data, objectives):
-        """Find optimal route using Dijkstra with GNN embeddings"""
-        # Use embeddings as heuristic
-        # In production: implement A* or Dijkstra with GNN heuristic
-        
-        # Simple path finding
-        route = []
-        current = start
-        visited = set()
-        node_map = getattr(graph_data, 'node_map', None)
+    def _find_optimal_route(self, start, end, embeddings, graph_data, objectives, constraints=None):
+        """Find optimal route using Dijkstra with GNN embeddings and constraint enforcement"""
+        if not hasattr(graph_data, 'graph'):
+            logger.warning("graph_data has no graph attribute")
+            return None
 
-        while current != end and len(visited) < 100:
-            visited.add(current)
-            neighbors = graph_data.graph.neighbors(current)
-            
-            best_neighbor = None
-            best_score = float('inf')
-            
-            for neighbor in neighbors:
-                if neighbor in visited:
-                    continue
-                    
-                # Calculate score using GNN embeddings
-                score = self._calculate_score(
-                    embeddings, 
-                    current, 
-                    neighbor, 
-                    objectives,
-                    graph_data,
-                    node_map
-                )
-                
-                if score < best_score:
-                    best_score = score
-                    best_neighbor = neighbor
-            
-            if best_neighbor is None:
-                break
-                
+        if start not in graph_data.graph or end not in graph_data.graph:
+            logger.warning(f"Start ({start}) or End ({end}) node not found in graph")
+            return None
+
+        if start == end:
+            return []
+
+        node_map = getattr(graph_data, 'node_map', None)
+        constraints = constraints or {}
+
+        def weight_func(u, v, edge_attrs):
+            # Hard constraints validation
+            # 1. Hazmat restriction: if route has hazmat cargo, road must permit hazmat
+            if constraints.get('hazmat', False) and not edge_attrs.get('hazmat_allowed', True):
+                return None
+
+            # 2. Weight / Capacity constraint: truck weight exceeds road capacity / bridge rating
+            truck_weight = constraints.get('truck_weight') or constraints.get('weight')
+            max_weight = edge_attrs.get('max_weight') or edge_attrs.get('weight_limit')
+            if truck_weight is not None and max_weight is not None and truck_weight > max_weight:
+                return None
+
+            # 3. Height / Clearance constraint
+            truck_height = constraints.get('truck_height') or constraints.get('height')
+            max_height = edge_attrs.get('max_height') or edge_attrs.get('height_limit')
+            if truck_height is not None and max_height is not None and truck_height > max_height:
+                return None
+
+            return self._calculate_score(embeddings, u, v, objectives, graph_data, node_map)
+
+        try:
+            path = nx.dijkstra_path(graph_data.graph, start, end, weight=weight_func)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            logger.warning(f"No feasible path found from {start} to {end}")
+            return None
+
+        if not path or len(path) < 2:
+            return None
+
+        route = []
+        total_time = 0
+        max_time = constraints.get('max_time') or constraints.get('hos_limit')
+
+        for i in range(len(path) - 1):
+            u, v = path[i], path[i + 1]
+            edge_data = graph_data.graph[u][v]
+            edge_time = edge_data.get('time', 0)
+            total_time += edge_time
+
+            # Hours of Service (HOS) / max transit time constraint
+            if max_time is not None and total_time > max_time:
+                logger.warning(f"Route violates HOS/time constraint ({total_time} > {max_time})")
+                return None
+
             route.append({
-                'from': current,
-                'to': best_neighbor,
-                'distance': graph_data.graph[current][best_neighbor].get('distance', 0),
-                'time': graph_data.graph[current][best_neighbor].get('time', 0),
-                'cost': graph_data.graph[current][best_neighbor].get('cost', 0),
-                'fuel': graph_data.graph[current][best_neighbor].get('fuel', 0)
+                'from': u,
+                'to': v,
+                'distance': edge_data.get('distance', 0),
+                'time': edge_time,
+                'cost': edge_data.get('cost', 0),
+                'fuel': edge_data.get('fuel', 0),
+                'congestion': edge_data.get('congestion', 0)
             })
-            
-            current = best_neighbor
-        
+
         return route
     
     def _calculate_score(self, embeddings, current, neighbor, objectives, graph_data, node_map=None):
-        """Calculate route score using GNN embeddings"""
-        score = 0
+        """Calculate route score using GNN embeddings and edge attributes"""
+        score = 0.0
         edge_data = graph_data.graph[current][neighbor]
         
         weights = {
             'time': 1.0,
             'cost': 0.5,
-            'fuel': 0.3
+            'fuel': 0.3,
+            'distance': 0.2,
+            'congestion': 2.0
         }
         
         for obj in objectives:
             if obj in edge_data:
-                score += weights.get(obj, 1.0) * edge_data[obj]
+                score += weights.get(obj, 1.0) * float(edge_data[obj])
         
-        # Add embedding distance
+        # Factor in congestion
+        congestion = edge_data.get('congestion', 0)
+        if congestion:
+            score += weights.get('congestion', 2.0) * float(congestion)
+
+        # Add embedding distance heuristic
         if node_map is None:
-            node_map = graph_data.node_map
-        emb_dist = np.linalg.norm(
-            embeddings[node_map[current]] - embeddings[node_map[neighbor]]
-        )
-        score += 0.1 * emb_dist
+            node_map = getattr(graph_data, 'node_map', None)
+            
+        if embeddings is not None and node_map and current in node_map and neighbor in node_map:
+            try:
+                emb_c = embeddings[node_map[current]]
+                emb_n = embeddings[node_map[neighbor]]
+                emb_dist = float(np.linalg.norm(emb_c - emb_n))
+                score += 0.1 * emb_dist
+            except Exception:
+                pass
         
-        return score
+        # Non-negative weight guard for Dijkstra
+        return max(score, 1e-6)
     
     def train(self, train_data, val_data=None, epochs=100):
         """Train GNN model"""
@@ -337,7 +406,7 @@ class RouteOptimizer:
         self.model.eval()
         logger.info(f"✅ Model loaded from {path}")
     
-    def multi_objective_optimization(self, start, end, graph_data):
+    def multi_objective_optimization(self, start, end, graph_data, constraints=None):
         """Multi-objective route optimization"""
         objectives = [
             {'name': 'time', 'weight': 0.5},
@@ -350,14 +419,18 @@ class RouteOptimizer:
         for obj in objectives:
             route = self.optimize_route(
                 start, end, graph_data, 
-                objectives=[obj['name']]
+                objectives=[obj['name']],
+                constraints=constraints
             )
             if route:
                 routes.append(route)
         
+        if not routes:
+            return None
+
         # Select best route
         best_route = min(routes, key=lambda x: 
-            sum([obj['weight'] * x[f'total_{obj["name"]}'] for obj in objectives])
+            sum([obj['weight'] * x.get(f'total_{obj["name"]}', 0) for obj in objectives])
         )
         
         return best_route
