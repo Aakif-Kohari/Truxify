@@ -536,30 +536,3 @@ export const __testing = {
   _haversineKm,
   parseWeightKg,
 };
-
-class MLService {
-  async handleResponse(response, url = '', method = 'GET') {
-    let data;
-    try {
-      data = await response.json();
-    } catch (err) {
-      throw new Error(`[ML] Failed to parse JSON response from ${method} ${url} (Status: ${response.status})`, { cause: err });
-    }
-
-    if (response.status === 401) {
-      throw new Error(`[ML] Authentication failed: ${method} ${url} (${response.status})`);
-    }
-
-    if (response.status === 403) {
-      throw new Error(`[ML] Forbidden: ${method} ${url} (${response.status})`);
-    }
-
-    if (!response.ok) {
-      throw new Error(`[ML] Request failed: ${method} ${url} ${response.status}`);
-    }
-
-    return data;
-  }
-}
-
-export default new MLService();
