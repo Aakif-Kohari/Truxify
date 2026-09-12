@@ -345,3 +345,23 @@ export function auditWithState(action, resourceType, getIdFn) {
     },
   });
 }
+
+/**
+ * Redacts PII fields from an object recursively.
+ */
+export function maskPii(obj) {
+  if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(maskPii);
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const norm = k.toLowerCase().replace(/[^a-z]/g, '');
+    if (['password', 'token', 'ssn', 'secret', 'authorization', 'apikey', 'privatekey', 'creditcard', 'cardnumber', 'cvv'].includes(norm)) {
+      out[k] = '***';
+    } else if (typeof v === 'object' && v !== null) {
+      out[k] = maskPii(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
