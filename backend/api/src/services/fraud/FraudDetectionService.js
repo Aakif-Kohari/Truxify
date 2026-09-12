@@ -1,4 +1,4 @@
-import logger from '../../middleware/logger.js';
+﻿import logger from '../../middleware/logger.js';
 import { redisClient, supabaseAdmin } from '../../config/db.js';
 
 const CONNECTION_PAGE_SIZE = 1000;
@@ -67,6 +67,25 @@ class FraudDetectionService {
         );
       } else {
         this.behavioralProfiles.set(userId, profile);
+      }
+
+      // Persist behavioral profile to Supabase to prevent 1-hour amnesia write-hole (#4142)
+      try {
+        const { error: dbErr } = await supabaseAdmin
+          .from('behavioral_profiles')
+          .upsert({
+            user_id: userId,
+            events: profile.events,
+            patterns: profile.patterns,
+            last_activity: new Date(profile.lastActivity || Date.now()).toISOString(),
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id' });
+
+        if (dbErr) {
+          logger.error('[FraudDetection] Failed to persist behavioral profile to DB:', dbErr.message);
+        }
+      } catch (persistenceErr) {
+        logger.error('[FraudDetection] Exception during profile DB persistence:', persistenceErr.message);
       }
 
       // Queue for batch upsert instead of awaiting individual upsert to prevent event loop blocking
