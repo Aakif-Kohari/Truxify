@@ -10,6 +10,8 @@ class WebRTCSignalingServer {
   constructor(server) {
     const MAX_WS_PAYLOAD_BYTES = parseInt(process.env.WS_MAX_PAYLOAD_BYTES, 10);
     this.wss = new WebSocketServer({ server, path: '/webrtc', maxPayload: Number.isFinite(MAX_WS_PAYLOAD_BYTES) ? MAX_WS_PAYLOAD_BYTES : 4096 });
+    const parsedMaxMeshes = parseInt(process.env.WS_MAX_MESHES, 10);
+    this.maxMeshes = Number.isFinite(parsedMaxMeshes) && parsedMaxMeshes > 0 ? parsedMaxMeshes : 10000;
     this.redis = redisClient;
     this.peers = new Map(); // peerId -> { ws, location, meshId }
     this.meshes = new Map(); // meshId -> Set of peerIds
@@ -56,7 +58,25 @@ class WebRTCSignalingServer {
         ws.close(4001, 'meshId exceeds maximum length');
         return;
       }
-      const meshId = rawMeshId || this.getOrCreateMesh();
+
+      const trimmedMeshId = typeof rawMeshId === 'string' ? rawMeshId.trim() : null;
+      let meshId = trimmedMeshId && trimmedMeshId.length > 0 ? trimmedMeshId : null;
+
+      const limit = this.maxMeshes || 10000;
+      if (!meshId) {
+        meshId = this.getOrCreateMesh();
+        if (!meshId) {
+          logger.warn('WebRTC connection rejected: maximum mesh limit reached');
+          ws.close(4002, 'Maximum mesh limit reached');
+          return;
+        }
+      } else if (!this.meshes.has(meshId)) {
+        if (this.meshes.size >= limit) {
+          logger.warn('WebRTC connection rejected: maximum mesh limit reached');
+          ws.close(4002, 'Maximum mesh limit reached');
+          return;
+        }
+      }
 
       // Store peer with authenticated user info
       this.peers.set(peerId, {
@@ -331,6 +351,10 @@ class WebRTCSignalingServer {
   }
 
   getOrCreateMesh() {
+    const limit = this.maxMeshes || 10000;
+    if (this.meshes.size >= limit) {
+      return null;
+    }
     const meshId = `mesh_${crypto.randomUUID()}`;
     this.meshes.set(meshId, new Set());
     return meshId;
