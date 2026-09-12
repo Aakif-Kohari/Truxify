@@ -291,12 +291,26 @@ router.get('/', authenticate, userLimiter, requirePolicy('load-offer:browse'), v
       vehicle_type: 'Truck'
     }));
 
+    const totalCount = count || 0;
+    const totalPages = Math.ceil(totalCount / limit);
+    const hasNextPage = page * limit < totalCount;
+
     res.json({
+      success: true,
       page,
       limit,
-      total: count || 0,
-      totalPages: Math.ceil((count || 0) / limit),
-      loads: formattedLoads
+      total: totalCount,
+      totalPages,
+      hasNextPage,
+      loads: formattedLoads,
+      data: formattedLoads,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        totalPages,
+        hasNextPage,
+      }
     });
 
   } catch (err) {
