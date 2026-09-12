@@ -620,13 +620,21 @@ router.get('/driver/statement', authenticate, requirePolicy('profile:view-statem
       };
     });
 
+    // Apply sorting before formatting output
+    if (sort_by === 'net_earnings') {
+      tripsList.sort((a, b) => (b.net_earnings - a.net_earnings) || new Date(b.pickup_date) - new Date(a.pickup_date));
+    } else if (sort_by === 'base_freight') {
+      tripsList.sort((a, b) => (b.base_freight - a.base_freight) || new Date(b.pickup_date) - new Date(a.pickup_date));
+    }
+
     if (format === 'csv') {
       // Optimize memory: construct CSV string directly using string builder/loop
       const sanitizeCsvValue = (val) => {
-        let str = String(val);
-  if (/^[=+\-@\t\r]/.test(str)) {
-    str = `'` + str;
-  }
+        if (val === null || val === undefined) return '""';
+        let str = String(val).replace(/[\r\n]+/g, ' ');
+        if (/^[=+\-@\t\r]/.test(str)) {
+          str = `'` + str;
+        }
         return `"${str.replace(/"/g, '""')}"`;
       };
       const headers = ['ID', 'Order Display ID', 'Pickup Address', 'Drop Address', 'Pickup Date', 'Base Freight', 'Platform Fee', 'Toll Estimate', 'Net Earnings', 'Status'];
@@ -635,15 +643,9 @@ router.get('/driver/statement', authenticate, requirePolicy('profile:view-statem
         const row = [t.id, t.order_display_id, t.pickup_address, t.drop_address, t.pickup_date, t.base_freight, t.platform_fee, t.toll_estimate, t.net_earnings, t.status];
         csvString += row.map(val => sanitizeCsvValue(val)).join(',') + '\n';
       }
-      res.setHeader('Content-Type', 'text/csv');
-      return res.send(csvString);
-    }
-    if (sort_by === 'net_earnings') {
-      // Optimize sorting: use net_earnings descending, fallback to pickup_date descending
-      tripsList.sort((a, b) => (b.net_earnings - a.net_earnings) || new Date(b.pickup_date) - new Date(a.pickup_date));
-    } else if (sort_by === 'base_freight') {
-      // Optimize sorting: use base_freight descending, fallback to pickup_date descending
-      tripsList.sort((a, b) => (b.base_freight - a.base_freight) || new Date(b.pickup_date) - new Date(a.pickup_date));
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="driver_statement.csv"');
+      return res.send(csvString.trimEnd());
     }
 
     res.json({

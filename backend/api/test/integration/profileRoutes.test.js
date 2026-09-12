@@ -554,8 +554,49 @@ describe('Profile Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.headers['content-disposition']).toBe('attachment; filename="driver_statement.csv"');
       expect(res.text).toContain('"order-1"');
       expect(res.text).toContain('"10000"');
+    });
+
+    it('sorts statement trips properly in CSV format when sort_by=net_earnings and format=csv are both passed', async () => {
+      m.store.orders.push(
+        {
+          id: 'order-low-earn',
+          driver_id: 'driver-uuid-456',
+          status: 'delivered',
+          pickup_address: '=FormulaInjection',
+          drop_address: 'B',
+          pickup_date: '2026-06-01',
+          base_freight: 10000,
+          platform_fee: 1000,
+          toll_estimate: 0
+        },
+        {
+          id: 'order-high-earn',
+          driver_id: 'driver-uuid-456',
+          status: 'delivered',
+          pickup_address: 'C',
+          drop_address: 'D',
+          pickup_date: '2026-06-05',
+          base_freight: 30000,
+          platform_fee: 1000,
+          toll_estimate: 0
+        }
+      );
+
+      const res = await request(buildApp())
+        .get('/api/profile/driver/statement?sort_by=net_earnings&format=csv')
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.headers['content-disposition']).toBe('attachment; filename="driver_statement.csv"');
+      const lines = res.text.split('\n');
+      expect(lines[1]).toContain('"order-high-earn"');
+      expect(lines[2]).toContain('"order-low-earn"');
+      // Verify formula injection escaped with single quote
+      expect(res.text).toContain('"' + "'=FormulaInjection" + '"');
     });
 
     it('sorts statement trips by net earnings when sort_by=net_earnings is passed', async () => {
