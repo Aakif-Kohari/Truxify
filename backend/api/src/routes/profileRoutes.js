@@ -106,7 +106,7 @@ import {
 } from '../services/profileService.js';
 import { supabase, supabaseAdmin, createUserClient } from '../config/db.js';
 import { ProfileModel } from '../models/ProfileModel.js';
-import { invalidateCachedProfile, invalidateCachedSupabaseProfileAll } from '../lib/profileCache.js';
+import { invalidateCachedProfile, invalidateCachedSupabaseProfileAll, invalidateProfileCache } from '../lib/profileCache.js';
 import { auditLog } from '../middleware/auditLog.js';
 
 const router = express.Router();
