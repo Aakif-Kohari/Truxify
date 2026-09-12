@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @openapi
  * components:
  *   schemas:
@@ -504,17 +504,27 @@ router.put('/hos/status', authenticate, userLimiter, requirePolicy('driver:updat
  */
 router.get('/wallet/history', authenticate, userLimiter, requirePolicy('driver:view-wallet'), async (req, res) => {
   try {
-    const page = parseIntegerQuery(req.query.page) ?? 1;
-    const limit = parseIntegerQuery(req.query.limit) ?? 20;
+    const pageParam = req.query.page ?? '1';
+    const limitParam = req.query.limit ?? '20';
+
+    if (typeof pageParam !== 'string' || !/^\d+$/.test(pageParam)) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+    if (typeof limitParam !== 'string' || !/^\d+$/.test(limitParam)) {
+      return res.status(400).json({ error: 'limit must be a positive integer' });
+    }
+
+    const page = parseInt(pageParam, 10);
+    const limit = parseInt(limitParam, 10);
 
     // Validation
-    if (Number.isNaN(page) || page < 1) {
+    if (page < 1) {
       return res.status(400).json({
         error: 'page must be greater than or equal to 1'
       });
     }
 
-    if (Number.isNaN(limit) || limit < 1 || limit > 100) {
+    if (limit < 1 || limit > 100) {
       return res.status(400).json({
         error: 'limit must be between 1 and 100'
       });
