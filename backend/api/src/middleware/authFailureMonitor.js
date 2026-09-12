@@ -232,3 +232,6 @@ export async function checkBoundOrFailClosed(redis, ip, opts = {}) {
   }
 }
 
+
+// Export SecurityAdmin for administrative overrides
+export { SecurityAdmin, securityEvents };
