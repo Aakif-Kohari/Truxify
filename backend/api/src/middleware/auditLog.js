@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // FILE: src/middleware/auditLogMiddleware.js
 // Description: Enterprise Audit Logging Middleware & State Interceptor
 // ============================================================================
@@ -122,6 +122,9 @@ function computeStateDiff(before, after) {
 /**
  * Resolves the resource type from policy action or URI pattern.
  */
+/**
+ * @internal Internal helper - intentionally unexported from public API (#14575)
+ */
 function resolveResourceType(action, req) {
   const mapping = ACTION_RESOURCE_MAP[action];
   if (mapping) return mapping.resourceType;
@@ -136,6 +139,9 @@ function resolveResourceType(action, req) {
 
 /**
  * Resolves the target resource identifier from request params or body.
+ */
+/**
+ * @internal Internal helper - intentionally unexported from public API (#14575)
  */
 function resolveResourceId(req) {
   return (
