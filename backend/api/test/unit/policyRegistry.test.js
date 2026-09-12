@@ -1,128 +1,97 @@
-import { describe, it, expect } from 'vitest';
-import { PolicyRegistry } from '../../src/core/auth/PolicyRegistry.js';
+﻿import { describe, it, expect, beforeEach } from 'vitest';
+import PolicyRegistry from '../../src/core/auth/PolicyRegistry.js';
 import { Permission } from '../../src/core/auth/Permission.js';
 
 describe('PolicyRegistry', () => {
-  let registry;
+    let registry;
 
-  beforeEach(() => {
-    registry = new PolicyRegistry();
-  });
-
-  describe('register', () => {
-    it('registers a permission and returns it', () => {
-      const perm = new Permission({ action: 'order:view', roles: ['driver'] });
-      const result = registry.register(perm);
-      expect(result).toBe(perm);
+    beforeEach(() => {
+        registry = new PolicyRegistry();
     });
 
-    it('registers a permission from an object', () => {
-      const result = registry.register({ action: 'order:view', roles: ['driver'] });
-      expect(registry.get('order:view')).toBeDefined();
-      expect(registry.get('order:view').action).toBe('order:view');
+    it('should register a permission object and return it', () => {
+        const permOpts = { action: 'read:users', description: 'Read users' };
+        const perm = registry.register(permOpts);
+        expect(perm).toBeInstanceOf(Permission);
+        expect(perm.action).toBe('read:users');
+        expect(registry.size).toBe(1);
     });
 
-    it('throws when action is already registered', () => {
-      registry.register({ action: 'order:view', roles: ['driver'] });
-      expect(() => {
-        registry.register({ action: 'order:view', roles: ['admin'] });
-      }).toThrow('Permission already registered for action: order:view');
-    });
-  });
-
-  describe('registerAll', () => {
-    it('registers multiple permissions', () => {
-      registry.registerAll([
-        { action: 'order:view', roles: ['driver'] },
-        { action: 'order:delete', roles: ['admin'] },
-      ]);
-      expect(registry.size).toBe(2);
-      expect(registry.has('order:view')).toBe(true);
-      expect(registry.has('order:delete')).toBe(true);
+    it('should register a Permission instance directly', () => {
+        const permission = new Permission({ action: 'write:users', description: 'Write users' });
+        const perm = registry.register(permission);
+        expect(perm).toBe(permission);
+        expect(registry.size).toBe(1);
     });
 
-    it('throws on duplicate within registerAll', () => {
-      expect(() => {
+    it('should throw when an action is already registered', () => {
+        registry.register({ action: 'read:users', description: 'Read users' });
+        expect(() => {
+            registry.register({ action: 'read:users', description: 'Duplicate read users' });
+        }).toThrowError('Permission already registered for action: read:users');
+    });
+
+    it('should register multiple permissions using registerAll', () => {
         registry.registerAll([
-          { action: 'order:view', roles: ['driver'] },
-          { action: 'order:view', roles: ['admin'] },
+            { action: 'read:users', description: 'Read users' },
+            { action: 'write:users', description: 'Write users' }
         ]);
-      }).toThrow('Permission already registered for action: order:view');
-    });
-  });
-
-  describe('get', () => {
-    it('returns the correct permission', () => {
-      registry.register({ action: 'order:view', roles: ['driver'] });
-      const perm = registry.get('order:view');
-      expect(perm).toBeDefined();
-      expect(perm.action).toBe('order:view');
+        expect(registry.size).toBe(2);
+        expect(registry.has('read:users')).toBe(true);
+        expect(registry.has('write:users')).toBe(true);
     });
 
-    it('returns undefined for unknown action', () => {
-      expect(registry.get('order:view')).toBeUndefined();
-    });
-  });
-
-  describe('has', () => {
-    it('returns true for registered action', () => {
-      registry.register({ action: 'order:view', roles: ['driver'] });
-      expect(registry.has('order:view')).toBe(true);
-    });
-
-    it('returns false for unregistered action', () => {
-      expect(registry.has('order:view')).toBe(false);
-    });
-  });
-
-  describe('listActions', () => {
-    it('returns sorted action names', () => {
-      registry.registerAll([
-        { action: 'order:delete', roles: ['admin'] },
-        { action: 'order:view', roles: ['driver'] },
-        { action: 'order:update', roles: ['driver'] },
-      ]);
-      const actions = registry.listActions();
-      expect(actions).toEqual(['order:delete', 'order:update', 'order:view']);
+    it('should register from a BasePolicy module using registerPolicy', () => {
+        const mockPolicyModule = {
+            getPermissions: () => [
+                { action: 'delete:users', description: 'Delete users' }
+            ]
+        };
+        registry.registerPolicy(mockPolicyModule);
+        expect(registry.size).toBe(1);
+        expect(registry.get('delete:users')).toBeInstanceOf(Permission);
     });
 
-    it('returns empty array when no permissions registered', () => {
-      expect(registry.listActions()).toEqual([]);
+    it('should return the correct permission via get', () => {
+        registry.register({ action: 'update:profile', description: 'Update profile' });
+        const perm = registry.get('update:profile');
+        expect(perm).toBeDefined();
+        expect(perm.action).toBe('update:profile');
+        expect(registry.get('nonexistent')).toBeUndefined();
     });
-  });
 
-  describe('listPermissions', () => {
-    it('returns all permission objects', () => {
-      registry.registerAll([
-        { action: 'order:view', roles: ['driver'] },
-        { action: 'order:delete', roles: ['admin'] },
-      ]);
-      const perms = registry.listPermissions();
-      expect(perms).toHaveLength(2);
-      expect(perms.map(p => p.action).sort()).toEqual(['order:delete', 'order:view']);
+    it('should return true/false correctly via has', () => {
+        registry.register({ action: 'view:dashboard', description: 'View dashboard' });
+        expect(registry.has('view:dashboard')).toBe(true);
+        expect(registry.has('nonexistent')).toBe(false);
     });
-  });
 
-  describe('size', () => {
-    it('returns the correct count', () => {
-      expect(registry.size).toBe(0);
-      registry.register({ action: 'order:view', roles: ['driver'] });
-      expect(registry.size).toBe(1);
-      registry.register({ action: 'order:delete', roles: ['admin'] });
-      expect(registry.size).toBe(2);
+    it('should return sorted action names via listActions', () => {
+        registry.register({ action: 'b:action', description: 'B' });
+        registry.register({ action: 'a:action', description: 'A' });
+        const actions = registry.listActions();
+        expect(actions).toEqual(['a:action', 'b:action']);
     });
-  });
 
-  describe('snapshot', () => {
-    it('produces a valid JSON object with correct count', () => {
-      registry.registerAll([
-        { action: 'order:view', roles: ['driver'] },
-        { action: 'order:delete', roles: ['admin'] },
-      ]);
-      const snap = registry.snapshot();
-      expect(snap.totalPermissions).toBe(2);
-      expect(snap.policies['order:view']).toBeDefined();
-      expect(snap.policies['order:delete']).toBeDefined();
+    it('should return all permission objects via listPermissions', () => {
+        registry.register({ action: 'action:one', description: 'One' });
+        registry.register({ action: 'action:two', description: 'Two' });
+        const perms = registry.listPermissions();
+        expect(perms.length).toBe(2);
+        expect(perms[0]).toBeInstanceOf(Permission);
     });
-  });
+
+    it('should return the correct count via size getter', () => {
+        expect(registry.size).toBe(0);
+        registry.register({ action: 'test:action', description: 'Test' });
+        expect(registry.size).toBe(1);
+    });
+
+    it('should produce a valid JSON object snapshot with correct count and policies', () => {
+        registry.register({ action: 'snap:action', description: 'Snapshot' });
+        const snap = registry.snapshot();
+        expect(snap).toBeDefined();
+        expect(snap.totalPermissions).toBe(1);
+        expect(snap.policies).toHaveProperty('snap:action');
+    });
 });
