@@ -1,4 +1,4 @@
-import { WebSocketServer } from 'ws';
+﻿import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import { verifyAuthToken } from '../../middleware/auth.js';
 import logger from '../../middleware/logger.js';
@@ -50,13 +50,9 @@ class WebRTCSignalingServer {
       }
 
       const peerId = this.generatePeerId();
-      const rawMeshId = url.searchParams.get('meshId');
-      const MAX_MESH_ID_LENGTH = 64;
-      if (rawMeshId != null && rawMeshId.length > MAX_MESH_ID_LENGTH) {
-        ws.close(4001, 'meshId exceeds maximum length');
-        return;
-      }
-      const meshId = rawMeshId || this.getOrCreateMesh();
+      // Security fix #4973: Do not allow clients to specify arbitrary meshId directly from query params
+      // Derive or generate a secure server-side meshId
+      const meshId = this.getOrCreateMesh();
 
       // Store peer with authenticated user info
       this.peers.set(peerId, {
