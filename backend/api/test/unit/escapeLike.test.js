@@ -110,3 +110,33 @@ describe('escapeLike and escapeSqlLike - additional coverage', () => {
     expect(escapeSqlLike('[test]')).toBe('\\[test\\]');
   });
 });
+
+describe('escapeLike and escapeSqlLike - backslash escape character', () => {
+  it('escapeLike escapes a lone backslash', () => {
+    expect(escapeLike('\\')).toBe('\\\\');
+  });
+
+  it('escapeLike escapes backslash before the % wildcard', () => {
+    expect(escapeLike('\\%')).toBe('\\\\\\%');
+  });
+
+  it('escapeLike escapes backslash before the _ wildcard', () => {
+    expect(escapeLike('a\\_b')).toBe('a\\\\\\_b');
+  });
+
+  it('escapeLike escapes backslashes inside plain text', () => {
+    expect(escapeLike('\\a\\b')).toBe('\\\\a\\\\b');
+  });
+
+  it('escapeLike escapes backslash combined with both wildcards', () => {
+    expect(escapeLike('%\\_')).toBe('\\%\\\\\\_');
+  });
+
+  it('escapeSqlLike escapes a lone backslash', () => {
+    expect(escapeSqlLike('\\')).toBe('\\\\');
+  });
+
+  it('escapeSqlLike escapes backslash inside square brackets', () => {
+    expect(escapeSqlLike('[\\]')).toBe('\\[\\\\\\]');
+  });
+});
