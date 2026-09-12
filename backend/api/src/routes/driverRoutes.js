@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @openapi
  * components:
  *   schemas:
@@ -847,16 +847,30 @@ router.get('/trips', authenticate, userLimiter, requirePolicy('driver:view-trips
   const { status } = req.query;
   const rawPage = req.query.page;
   const rawLimit = req.query.limit;
-  const parsedPage = parseIntegerQuery(rawPage);
-  const parsedLimit = parseIntegerQuery(rawLimit);
-  if (rawPage !== undefined && (!Number.isInteger(parsedPage) || parsedPage < 1)) {
+
+  if (rawPage !== undefined) {
+    if (typeof rawPage !== 'string' || !/^\d+$/.test(rawPage)) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+  }
+  if (rawLimit !== undefined) {
+    if (typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit)) {
+      return res.status(400).json({ error: 'limit must be a positive integer' });
+    }
+  }
+
+  const parsedPage = rawPage !== undefined ? parseInt(rawPage, 10) : 1;
+  const parsedLimit = rawLimit !== undefined ? parseInt(rawLimit, 10) : 10;
+
+  if (parsedPage < 1) {
     return res.status(400).json({ error: 'page must be a positive integer' });
   }
-  if (rawLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit < 1)) {
+  if (parsedLimit < 1) {
     return res.status(400).json({ error: 'limit must be a positive integer' });
   }
-  const page = parsedPage || 1;
-  const limit = Math.min(100, Math.max(1, parsedLimit || 10));
+
+  const page = parsedPage;
+  const limit = Math.min(100, Math.max(1, parsedLimit));
 
   try {
     const from = (page - 1) * limit;
