@@ -41,7 +41,9 @@ describe('RegionService lifecycle', () => {
     });
 
     afterEach(async () => {
-        await singleton.stop();
+        if (singleton && !singleton._stopped) {
+            await singleton.stop();
+        }
         vi.clearAllTimers();
         vi.useRealTimers();
     });
@@ -50,6 +52,7 @@ describe('RegionService lifecycle', () => {
         const service = Object.create(RegionService.prototype);
         service._healthInterval = null;
         service._replicationInterval = null;
+        service._stopped = false;
         service.checkAllRegions = vi.fn();
         service.replicateData = vi.fn();
 
@@ -72,6 +75,7 @@ describe('RegionService lifecycle', () => {
         const service = Object.create(RegionService.prototype);
         service._healthInterval = setInterval(() => {}, 10000);
         service._replicationInterval = setInterval(() => {}, 5000);
+        service._stopped = false;
         service.redis = { quit: vi.fn().mockResolvedValue('OK') };
 
         await service.stop();
@@ -79,12 +83,14 @@ describe('RegionService lifecycle', () => {
         expect(service._healthInterval).toBeNull();
         expect(service._replicationInterval).toBeNull();
         expect(service.redis.quit).toHaveBeenCalledOnce();
+        expect(service._stopped).toBe(true);
     });
 
-    it('can restart background loops after stop', async () => {
+    it('treats stop as terminal and does not restart intervals', async () => {
         const service = Object.create(RegionService.prototype);
         service._healthInterval = null;
         service._replicationInterval = null;
+        service._stopped = false;
         service.redis = { quit: vi.fn().mockResolvedValue('OK') };
         service.checkAllRegions = vi.fn();
         service.replicateData = vi.fn();
@@ -95,10 +101,37 @@ describe('RegionService lifecycle', () => {
         await service.startHealthChecks();
         await service.startDataReplication();
 
-        expect(service._healthInterval).not.toBeNull();
-        expect(service._replicationInterval).not.toBeNull();
+        expect(service._healthInterval).toBeNull();
+        expect(service._replicationInterval).toBeNull();
+    });
 
-        clearInterval(service._healthInterval);
-        clearInterval(service._replicationInterval);
+    it('does not perform Redis work from a callback that resumes after stop', async () => {
+        let resolveFetch;
+        const fetchPromise = new Promise(resolve => {
+            resolveFetch = resolve;
+        });
+
+        const service = Object.create(RegionService.prototype);
+        service._healthInterval = null;
+        service._replicationInterval = null;
+        service._stopped = false;
+        service.primaryRegion = { name: 'primary' };
+        service.regions = [{ name: 'primary' }, { name: 'secondary' }];
+        service.fetchDataFromRegion = vi.fn().mockReturnValue(fetchPromise);
+        service.replicateToRegion = vi.fn();
+        service.redis = {
+            quit: vi.fn().mockResolvedValue('OK'),
+            incr: vi.fn(),
+            set: vi.fn()
+        };
+
+        const replication = service.replicateData();
+        await service.stop();
+        resolveFetch({ payload: true });
+        await replication;
+
+        expect(service.replicateToRegion).not.toHaveBeenCalled();
+        expect(service.redis.incr).not.toHaveBeenCalled();
+        expect(service.redis.set).not.toHaveBeenCalled();
     });
 });
