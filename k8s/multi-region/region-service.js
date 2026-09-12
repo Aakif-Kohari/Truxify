@@ -3,12 +3,13 @@ import logger from '../../backend/api/src/middleware/logger.js';
 import { supabase } from '../../backend/api/src/config/db.js';
 import Redis from 'ioredis';
 
-class RegionService {
+export class RegionService {
     constructor() {
         this.regions = [];
         this.activeRegions = [];
         this.primaryRegion = null;
         this._healthInterval = null;
+        this._replicationInterval = null;
         this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
         
         // Load region config
@@ -73,7 +74,7 @@ class RegionService {
     // ============ Health Checks ============
 
     async startHealthChecks() {
-        if (this._healthInterval) clearInterval(this._healthInterval);
+        if (this._healthInterval) return;
         this._healthInterval = setInterval(async () => {
             await this.checkAllRegions();
         }, 10000); // Every 10 seconds
@@ -199,9 +200,30 @@ class RegionService {
     // ============ Data Replication ============
 
     async startDataReplication() {
-        setInterval(async () => {
+        if (this._replicationInterval) return;
+        this._replicationInterval = setInterval(async () => {
             await this.replicateData();
         }, 5000); // Every 5 seconds
+    }
+
+    async stop() {
+        if (this._healthInterval) {
+            clearInterval(this._healthInterval);
+            this._healthInterval = null;
+        }
+
+        if (this._replicationInterval) {
+            clearInterval(this._replicationInterval);
+            this._replicationInterval = null;
+        }
+
+        if (this.redis) {
+            if (typeof this.redis.quit === 'function') {
+                await this.redis.quit();
+            } else if (typeof this.redis.disconnect === 'function') {
+                this.redis.disconnect();
+            }
+        }
     }
 
     async replicateData() {
