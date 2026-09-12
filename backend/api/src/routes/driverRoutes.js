@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @openapi
  * components:
  *   schemas:
@@ -1207,14 +1207,22 @@ router.get('/bids', authenticate, userLimiter, requirePolicy('driver:view-bids')
   try {
     const pageParam = req.query.page ?? '1';
     const limitParam = req.query.limit ?? '10';
-    const page = typeof pageParam === 'string' ? Number(pageParam) : NaN;
-    const limit = typeof limitParam === 'string' ? Number(limitParam) : NaN;
 
-    if (!Number.isInteger(page) || page < 1) {
+    if (typeof pageParam !== 'string' || !/^\d+$/.test(pageParam)) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+    if (typeof limitParam !== 'string' || !/^\d+$/.test(limitParam)) {
+      return res.status(400).json({ error: 'limit must be a positive integer' });
+    }
+
+    const page = parseInt(pageParam, 10);
+    const limit = parseInt(limitParam, 10);
+
+    if (page < 1) {
       return res.status(400).json({ error: 'page must be greater than or equal to 1' });
     }
 
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    if (limit < 1 || limit > 100) {
       return res.status(400).json({ error: 'limit must be between 1 and 100' });
     }
 
