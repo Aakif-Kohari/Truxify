@@ -2,6 +2,7 @@ import axios from 'axios';
 import logger from '../../backend/api/src/middleware/logger.js';
 import { supabase } from '../../backend/api/src/config/db.js';
 import Redis from 'ioredis';
+import { parseRegionsConfig } from './region-config.js';
 
 class RegionService {
     constructor() {
@@ -27,15 +28,11 @@ class RegionService {
         let config;
         if (process.env.REGIONS) {
             try {
-                config = JSON.parse(process.env.REGIONS);
+                config = parseRegionsConfig(process.env.REGIONS);
             } catch (err) {
-                logger.error(`Invalid REGIONS env var (must be valid JSON). Value: ${process.env.REGIONS}`);
-                logger.error(`JSON parse error: ${err.message}`);
+                logger.error(`Invalid REGIONS env var: ${err.message}`);
                 process.exit(1);
-            }
-            if (!Array.isArray(config)) {
-                logger.error(`REGIONS env var must be a JSON array of region objects. Value: ${process.env.REGIONS}`);
-                process.exit(1);
+                return;
             }
         } else {
             config = [
