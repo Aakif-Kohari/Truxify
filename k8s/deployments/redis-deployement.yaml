@@ -21,13 +21,13 @@ spec:
       containers:
       - name: redis
         image: redis:7-alpine
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        runAsNonRoot: true
-        capabilities:
-          drop:
-            - ALL
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
         ports:
         - containerPort: 6379
         resources:

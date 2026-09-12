@@ -22,13 +22,13 @@ spec:
       containers:
       - name: api
         image: truxify/api:1.0.0
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        runAsNonRoot: true
-        capabilities:
-          drop:
-            - ALL
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5000
