@@ -10,6 +10,7 @@ export class RegionService {
         this.primaryRegion = null;
         this._healthInterval = null;
         this._replicationInterval = null;
+        this._stopped = false;
         this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
         
         // Load region config
@@ -74,19 +75,24 @@ export class RegionService {
     // ============ Health Checks ============
 
     async startHealthChecks() {
-        if (this._healthInterval) return;
+        if (this._stopped || this._healthInterval) return;
         this._healthInterval = setInterval(async () => {
+            if (this._stopped) return;
             await this.checkAllRegions();
         }, 10000); // Every 10 seconds
     }
 
     async checkAllRegions() {
+        if (this._stopped) return {};
         const results = {};
         
         for (const region of this.regions) {
+            if (this._stopped) return results;
             results[region.name] = await this.checkRegionHealth(region);
         }
         
+        if (this._stopped) return results;
+
         // Update active regions
         const previousActive = this.activeRegions.map(r => r.name);
         this.activeRegions = this.regions.filter(r => results[r.name].healthy);
@@ -100,6 +106,8 @@ export class RegionService {
             await this.handleFailover(previousActive, this.activeRegions);
         }
         
+        if (this._stopped) return results;
+
         // Cache health status
         await this.redis.setex(
             'regions:health',
@@ -200,13 +208,17 @@ export class RegionService {
     // ============ Data Replication ============
 
     async startDataReplication() {
-        if (this._replicationInterval) return;
+        if (this._stopped || this._replicationInterval) return;
         this._replicationInterval = setInterval(async () => {
+            if (this._stopped) return;
             await this.replicateData();
         }, 5000); // Every 5 seconds
     }
 
     async stop() {
+        if (this._stopped) return;
+        this._stopped = true;
+
         if (this._healthInterval) {
             clearInterval(this._healthInterval);
             this._healthInterval = null;
@@ -228,23 +240,31 @@ export class RegionService {
 
     async replicateData() {
         try {
+            if (this._stopped) return;
+
             // Get data from primary region
             if (!this.primaryRegion) return;
             
             const data = await this.fetchDataFromRegion(this.primaryRegion);
+            if (this._stopped) return;
             
             // Replicate to other regions
             for (const region of this.regions) {
+                if (this._stopped) return;
                 if (region.name === this.primaryRegion.name) continue;
                 
                 await this.replicateToRegion(region, data);
             }
             
-            logger.info(`✅ Data replicated to ${this.regions.length - 1} regions`);
+            if (!this._stopped) {
+                logger.info(`✅ Data replicated to ${this.regions.length - 1} regions`);
+            }
         } catch (error) {
             logger.error('Data replication failed:', error);
-            await this.redis.incr('replication:global:error_count');
-            await this.redis.set('replication:global:last_error', new Date().toISOString());
+            if (!this._stopped) {
+                await this.redis.incr('replication:global:error_count');
+                await this.redis.set('replication:global:last_error', new Date().toISOString());
+            }
         }
     }
 
@@ -302,30 +322,10 @@ export class RegionService {
         }
         
         const health = await this.redis.get('regions:health');
+        metrics.routing = routingStats;
+        metrics.health = health ? JSON.parse(health) : {};
         
-        return {
-            regions: this.regions.map(r => ({
-                ...r,
-                routingCount: routingStats[r.name] || 0,
-                status: health ? JSON.parse(health)[r.name] : null
-            })),
-            activeRegions: this.activeRegions.map(r => r.name),
-            primaryRegion: this.primaryRegion?.name,
-            timestamp: new Date().toISOString()
-        };
-    }
-
-    async getReplicationLag() {
-        const lag = {};
-        for (const region of this.regions) {
-            if (region.name === this.primaryRegion?.name) continue;
-            
-            const lastSync = await this.redis.get(`replication:${region.name}:last_sync`);
-            if (lastSync) {
-                lag[region.name] = Date.now() - parseInt(lastSync, 10);
-            }
-        }
-        return lag;
+        return metrics;
     }
 }
 
