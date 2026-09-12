@@ -199,7 +199,3 @@ export async function checkBoundOrFailClosed(redis, ip, opts = {}) {
     throw err;
   }
 }
-
-
-// Export securityEvents for administrative overrides
-export { securityEvents };
