@@ -409,7 +409,7 @@ class WebRTCSignalingServer {
 
   async getPeersNearLocation(lat, lng, radius = 10) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      throw new TypeError('getPeersNearLocation: lat and lng must be finite numbers');
+      throw new TypeError('Latitude and longitude must be finite numbers');
     }
     const nearbyPeers = [];
     for (const [peerId, peer] of this.peers) {
