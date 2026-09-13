@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+﻿import crypto from 'crypto';
 import logger from '../middleware/logger.js';
 
 const TOKEN_BYTE_LENGTH = 32;
@@ -113,6 +113,7 @@ export class TrackingTokenService {
 
     if (error) {
       this._logger.error({ error, orderDisplayId }, 'Failed to revoke tracking tokens for order');
+      throw new Error('Failed to revoke tracking tokens for order');
     }
   }
 
