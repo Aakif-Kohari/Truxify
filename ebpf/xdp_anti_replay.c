@@ -21,7 +21,8 @@ struct anti_replay_entry {
 
 // BPF Map: Per-flow anti-replay sequence tracking.
 // BPF_MAP_TYPE_HASH supports bpf_spin_lock (LRU_HASH does not), so the verifier
-// accepts the program.
+// accepts the program. Userspace sweeps/monitoring can prune idle flows to
+// maintain available capacity under traffic churn.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10000);
