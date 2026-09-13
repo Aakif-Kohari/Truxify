@@ -385,13 +385,6 @@ async function verifyDriverToken(socket, next) {
       return next(new Error("Authentication required: no token provided"));
     }
 
-    // In BYPASS_AUTH mode (local dev), skip verification
-    if (process.env.BYPASS_AUTH === "true" && process.env.NODE_ENV !== "production") {
-      socket.data.driverId = socket.handshake.auth.driverId || "dev-driver";
-      socket.data.bookingId = socket.handshake.auth.bookingId || "dev-booking";
-      return next();
-    }
-
     const profile = await verifyAuthToken(token);
 
     if (profile.role !== "driver") {
@@ -429,11 +422,6 @@ async function verifyCustomerToken(socket, next) {
 
     if (!token) {
       return next(new Error("Authentication required: no token provided"));
-    }
-
-    if (process.env.BYPASS_AUTH === "true" && process.env.NODE_ENV !== "production") {
-      socket.data.customerId = socket.handshake.auth.customerId || "dev-customer";
-      return next();
     }
 
     const profile = await verifyAuthToken(token);
