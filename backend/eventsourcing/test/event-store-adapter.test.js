@@ -7,7 +7,6 @@ import {
   EventStorePersistenceError,
   createSupabaseDb,
 } from '../event-store.js';
-import { EventStoreError } from '../errors.js';
 import { InMemoryDb, dbRow } from './in-memory-db.js';
 
 const silentLogger = {
@@ -56,7 +55,7 @@ function createMockClient() {
  *   - duplicate onConflict (aggregate_id, version) with ignoreDuplicates: true -> { data: [], error: null }
  * - database errors return { data: null, error: { message, code } }
  */
-function createMockSupabaseEventStoreClient({ initialRows = [], errorToThrow = null } = {}) {
+function createMockSupabaseEventStoreClient({ initialRows = [], errorToThrow = null, latestVersionOverride = undefined } = {}) {
   const store = new Map();
   for (const r of initialRows) store.set(`${r.aggregate_id}\0${r.version}`, r);
 
@@ -76,6 +75,9 @@ function createMockSupabaseEventStoreClient({ initialRows = [], errorToThrow = n
               limit: () => ({
                 maybeSingle: async () => {
                   if (errorToThrow) return { data: null, error: errorToThrow };
+                  if (latestVersionOverride !== undefined) {
+                    return { data: latestVersionOverride === null ? null : { version: latestVersionOverride }, error: null };
+                  }
                   const rows = [...store.values()].filter((r) => r.aggregate_id === val);
                   return { data: rows.length ? { version: Math.max(...rows.map((r) => r.version)) } : null, error: null };
                 },
@@ -274,17 +276,27 @@ describe('EventStore adapter', () => {
     });
 
     test('appendEvent rejects with EventStoreVersionConflictError when duplicate is ignored', async () => {
-      const client = createMockSupabaseEventStoreClient();
+      // Seed the store with version 1 (committed by a concurrent command)
+      const existingRow = {
+        event_id: 'e1',
+        event_type: 'ORDER_CREATED',
+        aggregate_id: 'order_supabase_dup',
+        payload: { a: 1 },
+        version: 1,
+        timestamp: new Date().toISOString(),
+      };
+      // latestVersionOverride: 0 simulates a stale read where expectedVersion is 0,
+      // so the pre-check passes and insertEvent(version 1) is invoked against the database.
+      const client = createMockSupabaseEventStoreClient({
+        initialRows: [existingRow],
+        latestVersionOverride: 0,
+      });
       const store = new EventStore({ client, logger: silentLogger });
 
-      // First append succeeds: version 0 -> nextVersion 1
-      await store.appendEvent(
-        'order_supabase_dup',
-        { type: 'ORDER_CREATED', payload: { a: 1 } },
-        0
-      );
-
-      // Concurrent append with expectedVersion 0 tries to write version 1 again -> conflict
+      // expectedVersion is 0; pre-check passes because fetchLatestVersion returned 0.
+      // Next version is calculated as 1. When insertEvent is called with version 1,
+      // the unique constraint (aggregate_id, version) triggers ignoreDuplicates: true,
+      // returning { data: [], error: null }.
       await assert.rejects(
         () => store.appendEvent(
           'order_supabase_dup',
@@ -295,7 +307,8 @@ describe('EventStore adapter', () => {
           assert.ok(err instanceof EventStoreVersionConflictError, `Expected EventStoreVersionConflictError but got ${err?.constructor?.name}`);
           assert.equal(err.code, 'EVENT_VERSION_CONFLICT');
           assert.equal(err.aggregateId, 'order_supabase_dup');
-          assert.equal(err.expectedVersion, 0);
+          assert.equal(err.currentVersion, 1);
+          assert.match(err.message, /a concurrent command already committed this version/);
           return true;
         }
       );
