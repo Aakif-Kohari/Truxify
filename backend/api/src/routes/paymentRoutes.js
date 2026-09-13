@@ -115,19 +115,19 @@ router.post(
       }
       const orderRef = order.order_display_id;
 
-    const orderData = order.data;
+      const deepLink =
+        `upi://pay?pa=${encodeURIComponent(platformUpiId)}` +
+        `&pn=${encodeURIComponent('Truxify')}` +
+        `&am=${encodeURIComponent(amountInr)}` +
+        `&cu=INR` +
+        `&tn=${encodeURIComponent(orderRef)}`;
 
-    // Ensure only the customer who created it or admin can lock it
-    if (orderData.customer_id !== req.user.id) {
-      return res.status(403).json({ error: 'Access Denied: You do not own this order.' });
-    }
-
-    if (orderData.escrow_status === 'funded') {
       return res.status(200).json({
-        success: true,
-        message: 'Payment is already locked in escrow.',
-        txHash: orderData.deposit_tx_hash,
-        bookingId: orderData.escrow_booking_id
+        upi_id: platformUpiId,
+        amount_inr: amountInr,
+        amount_paisa: amountPaisa,
+        order_ref: orderRef,
+        deep_link: deepLink,
       });
     } catch (err) {
       logger.error(
