@@ -803,7 +803,6 @@ async function shutdown(signal) {
   stopWithdrawalSettlementWorker()
   stopOutboxRelayWorker()
   stopStaleOrderWorker()
-  stopDevicePruningWorker()
   fraudDetection.destroy()
   CacheManager.shutdown()
 
