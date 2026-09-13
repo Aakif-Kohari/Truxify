@@ -43,6 +43,10 @@ export const CONSUMER_GROUPS = {
   ESCROW_SERVICE: 'escrow-service',
 };
 
+export function formatKafkaMessageKey(key) {
+  return key?.toString() ?? null;
+}
+
 class KafkaConfig {
   get kafka() {
     return kafka;
@@ -209,7 +213,7 @@ class KafkaConfig {
           }
           const parentContext = propagation.extract(context.active(), normalizedHeaders);
 
-          logger.debug(`📥 Message received: ${topic}`, { key: message.key.toString() });
+          logger.debug(`📥 Message received: ${topic}`, { key: formatKafkaMessageKey(message.key) });
 
           await context.with(parentContext, async () => {
             await messageHandler(topic, value, message);
