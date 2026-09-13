@@ -242,10 +242,12 @@ class KafkaConfig {
   async getConsumerGroupOffsets(groupId) {
     const admin = kafka.admin();
     await admin.connect();
-    
-    const offsets = await admin.listConsumerGroupOffsets(groupId);
-    await admin.disconnect();
-    return offsets;
+
+    try {
+      return await admin.listConsumerGroupOffsets(groupId);
+    } finally {
+      await admin.disconnect();
+    }
   }
 
   parsePartitionId(partition) {
