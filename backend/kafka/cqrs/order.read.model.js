@@ -272,23 +272,22 @@ class OrderReadModel {
 
     try {
       const { data, error } = await supabase
-        .from('orders_read_model')
         .from(ORDER_READ_MODEL_TABLE)
         .select('*')
         .eq('order_id', key)
-        .single();
+        .maybeSingle();
 
-      if (error) {
-        // If not found, rebuild from the authoritative outbox/orders tables.
+      if (error) throw error;
+      if (!data) {
+        // Only a confirmed no-row result is a cache miss that should rebuild.
         return await this.buildReadModel(key);
       }
 
       this._cacheSet(key, data);
-
       return data;
     } catch (error) {
       logger.error('Failed to get read model:', error);
-      return null;
+      throw error;
     }
   }
 
