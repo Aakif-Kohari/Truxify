@@ -43,6 +43,11 @@ export const CONSUMER_GROUPS = {
   ESCROW_SERVICE: 'escrow-service',
 };
 
+/**
+ * Returns a log-safe string representation of a Kafka message key.
+ * Kafka permits null keys, so keyless messages must not be treated as
+ * processing failures merely because debug logging formats the key.
+ */
 export function formatKafkaMessageKey(key) {
   return key?.toString() ?? null;
 }
