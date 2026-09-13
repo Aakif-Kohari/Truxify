@@ -157,6 +157,7 @@ import { awardReputationPoints } from '../services/reputation.js';
 import { expireDeliveryOtps, sendPushNotification } from '../services/notificationService.js';
 import { DomainError } from '../services/order/domainError.js';
 import { predictDemand, predictPrice, matchEnRouteLoads } from '../services/ml.js';
+import { getEscrowBookingId } from '../services/escrow.js';
 import { requireIdempotency } from '../middleware/idempotency.js';
 import { acquireLockOrFallback } from '../lib/lockFallback.js';
 import logger from '../middleware/logger.js';
