@@ -88,25 +88,28 @@ class KafkaConfig {
   async createTopics() {
     const admin = kafka.admin();
     await admin.connect();
-    
-    const topics = Object.values(TOPICS).map(topic => ({
-      topic,
-      numPartitions: 3,
-      replicationFactor: 1,
-      configEntries: [
-        { name: 'retention.ms', value: '604800000' }, // 7 days
-        { name: 'cleanup.policy', value: 'delete' },
-        { name: 'delete.retention.ms', value: '604800000' },
-      ],
-    }));
-    
-    await admin.createTopics({
-      topics,
-      validateOnly: false,
-    });
-    
-    await admin.disconnect();
-    logger.info('✅ Kafka topics created');
+
+    try {
+      const topics = Object.values(TOPICS).map(topic => ({
+        topic,
+        numPartitions: 3,
+        replicationFactor: 1,
+        configEntries: [
+          { name: 'retention.ms', value: '604800000' }, // 7 days
+          { name: 'cleanup.policy', value: 'delete' },
+          { name: 'delete.retention.ms', value: '604800000' },
+        ],
+      }));
+
+      await admin.createTopics({
+        topics,
+        validateOnly: false,
+      });
+
+      logger.info('✅ Kafka topics created');
+    } finally {
+      await admin.disconnect();
+    }
   }
 
   async getProducer() {
