@@ -74,5 +74,29 @@ def test_replay_state_tracks_last_seq_not_just_time():
     assert "XDP_PASS" in source
 
 
+def test_seq_tracking_map_uses_hash_map_for_spin_lock():
+    source = _source()
+    # BPF_MAP_TYPE_LRU_HASH does not support bpf_spin_lock in the kernel verifier.
+    # seq_tracking_map must use BPF_MAP_TYPE_HASH so the program can be loaded.
+    assert "BPF_MAP_TYPE_HASH" in source
+    assert "BPF_MAP_TYPE_LRU_HASH" not in source
+    # The map value struct must still contain the spin lock to guard RMW operations.
+    assert "struct bpf_spin_lock lock;" in source
+    assert "bpf_spin_lock(&entry->lock);" in source
+    assert "bpf_spin_unlock(&entry->lock);" in source
+
+
+def test_map_update_handles_failure_fail_closed():
+    source = _source()
+    # If map insertion fails (e.g. map is saturated), the filter must fail closed and drop.
+    assert "bpf_map_update_elem(&seq_tracking_map, &flow_key, &new_entry, BPF_ANY) != 0" in source
+
+
+def test_flow_key_packs_ip_into_upper_32_bits():
+    source = _source()
+    # Flow key must place the 32-bit source IP into the upper 32 bits of the 64-bit key.
+    assert "((__u64)ip->saddr << 32) | (__u64)udp->source" in source
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
