@@ -1,11 +1,13 @@
-﻿import { describe, it, expect } from 'vitest'
-import { validatePricePrediction, convertToPaisa } from '../../src/lib/predictionValidator.js'
+import { describe, it, expect } from 'vitest'
+import { validatePricePrediction, validatePrediction, convertToPaisa } from '../../src/lib/predictionValidator.js'
 
 describe('predictionValidator', () => {
   describe('validatePricePrediction', () => {
     it('should return NULL_RESPONSE for null or undefined input', () => {
       expect(validatePricePrediction(null)).toEqual(expect.objectContaining({ ok: false }))
       expect(validatePricePrediction(undefined)).toEqual(expect.objectContaining({ ok: false }))
+      expect(validatePrediction(null)).toEqual(expect.objectContaining({ ok: false }))
+      expect(validatePrediction(undefined)).toEqual(expect.objectContaining({ ok: false }))
     })
 
     it('should return UNEXPECTED_TYPE for non-object types', () => {
