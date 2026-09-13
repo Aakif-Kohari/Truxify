@@ -1,4 +1,4 @@
-import { WebSocketServer } from 'ws';
+﻿import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import { verifyAuthToken } from '../../middleware/auth.js';
 import logger from '../../middleware/logger.js';
@@ -52,26 +52,39 @@ class WebRTCSignalingServer {
       }
 
       const peerId = this.generatePeerId();
-      const rawMeshId = url.searchParams.get('meshId');
-      const MAX_MESH_ID_LENGTH = 64;
-      if (rawMeshId != null && rawMeshId.length > MAX_MESH_ID_LENGTH) {
-        ws.close(4001, 'meshId exceeds maximum length');
-        return;
+      // Security fix #4973: Do not allow clients to specify arbitrary meshId directly from query params
+      // Derive or generate a secure server-side meshId
+      // Reuse authorized mesh for the same authenticated user if already active, otherwise create securely
+      let meshId = null;
+      for (const [existingPeerId, peer] of this.peers.entries()) {
+        if (peer.userId === decoded.id && peer.meshId && this.meshes.has(peer.meshId)) {
+          meshId = peer.meshId;
+          break;
+        }
       }
+      if (!meshId) {
+        meshId = this.getOrCreateMesh();
+      }
+      const peerId = this.generatePeerId();
 
-      const trimmedMeshId = typeof rawMeshId === 'string' ? rawMeshId.trim() : null;
-      let meshId = trimmedMeshId && trimmedMeshId.length > 0 ? trimmedMeshId : null;
+      // Security fix #4973 & CodeRabbit: Prevent arbitrary client meshId and reuse authorized active mesh
+      let meshId = null;
+      for (const [existingPeerId, peer] of this.peers.entries()) {
+        if (peer.userId === decoded.id && peer.meshId && this.meshes.has(peer.meshId)) {
+          meshId = peer.meshId;
+          break;
+        }
+      }
 
       const limit = this.maxMeshes || 10000;
       if (!meshId) {
-        meshId = this.getOrCreateMesh();
-        if (!meshId) {
+        if (this.meshes.size >= limit) {
           logger.warn('WebRTC connection rejected: maximum mesh limit reached');
           ws.close(4002, 'Maximum mesh limit reached');
           return;
         }
-      } else if (!this.meshes.has(meshId)) {
-        if (this.meshes.size >= limit) {
+        meshId = this.getOrCreateMesh();
+        if (!meshId) {
           logger.warn('WebRTC connection rejected: maximum mesh limit reached');
           ws.close(4002, 'Maximum mesh limit reached');
           return;
