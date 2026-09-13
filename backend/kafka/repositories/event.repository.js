@@ -4,6 +4,9 @@ import logger from '../../api/src/middleware/logger.js';
 class EventRepository {
   async saveEvent(event) {
     try {
+      const metadata = event.metadata ?? {};
+      const timestamp = event.timestamp ?? metadata.timestamp ?? new Date().toISOString();
+
       const { data, error } = await supabase
         .from('events')
         .insert([{
@@ -11,8 +14,8 @@ class EventRepository {
           event_type: event.eventType,
           order_id: event.orderId,
           data: event.data,
-          metadata: event.metadata,
-          timestamp: event.metadata.timestamp,
+          metadata,
+          timestamp,
         }])
         .select()
         .single();
