@@ -53,14 +53,13 @@ const statusLimiter = rateLimit({
 const lockPaymentSchema = z.union([
   z.object({
     order_id: z.string().min(1, 'order_id is required'),
-    tx_hash: z.string().min(1, 'tx_hash is required'),
+    tx_hash: z.string().trim().min(1, 'tx_hash is required'),
     wallet_address: z.string().optional(),
   }),
   z.object({
     bookingId: z.string().min(1),
-    upiReference: z.string().optional(),
     amount: z.number().positive().optional(),
-    tx_hash: z.string().optional(),
+    tx_hash: z.string().trim().min(1, 'tx_hash is required'),
     order_id: z.string().optional(),
   }),
 ]);
@@ -186,7 +185,7 @@ router.post(
   auditLog({ action: 'payment:lock', resourceType: 'escrow' }),
   async (req, res) => {
     const order_id = req.body.order_id || req.body.bookingId;
-    const tx_hash = req.body.tx_hash || req.body.upiReference;
+    const tx_hash = req.body.tx_hash;
     const lockKey = `payment_lock:${order_id}`;
 
     // lockValue holds the owner UUID returned by acquireLock.
@@ -457,7 +456,12 @@ router.get(
         'id, order_display_id, customer_id, driver_id, escrow_status, escrow_booking_id, escrow_deposited_at, escrow_released_at, total_amount, status'
       );
 
-      if (error || !order) {
+      if (error) {
+        logger.error({ error }, '[payments] Failed to fetch payment status');
+        return res.status(500).json({ error: 'Failed to fetch payment status.' });
+      }
+
+      if (!order) {
         return res.status(404).json({ error: 'Order not found.' });
       }
 
@@ -466,7 +470,7 @@ router.get(
         order.customer_id === req.user.id || order.driver_id === req.user.id;
 
       if (!isParticipant) {
-        return res.status(403).json({ error: 'Access denied.' });
+        return res.status(404).json({ error: 'Order not found.' });
       }
 
       return res.json({
