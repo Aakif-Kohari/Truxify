@@ -160,6 +160,10 @@ jobs:
           PYTHONPATH: .
         run: python -m pytest tests/ -v
 
+      - name: Run eBPF tests
+        run: python -m pytest ebpf/tests -v
+
+
   contracts:
     name: Smart contract checks
     needs: secret-scan

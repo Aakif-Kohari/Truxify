@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @openapi
  * components:
  *   schemas:
@@ -504,17 +504,27 @@ router.put('/hos/status', authenticate, userLimiter, requirePolicy('driver:updat
  */
 router.get('/wallet/history', authenticate, userLimiter, requirePolicy('driver:view-wallet'), async (req, res) => {
   try {
-    const page = parseIntegerQuery(req.query.page) ?? 1;
-    const limit = parseIntegerQuery(req.query.limit) ?? 20;
+    const pageParam = req.query.page ?? '1';
+    const limitParam = req.query.limit ?? '20';
+
+    if (typeof pageParam !== 'string' || !/^\d+$/.test(pageParam)) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+    if (typeof limitParam !== 'string' || !/^\d+$/.test(limitParam)) {
+      return res.status(400).json({ error: 'limit must be a positive integer' });
+    }
+
+    const page = parseInt(pageParam, 10);
+    const limit = parseInt(limitParam, 10);
 
     // Validation
-    if (Number.isNaN(page) || page < 1) {
+    if (page < 1) {
       return res.status(400).json({
         error: 'page must be greater than or equal to 1'
       });
     }
 
-    if (Number.isNaN(limit) || limit < 1 || limit > 100) {
+    if (limit < 1 || limit > 100) {
       return res.status(400).json({
         error: 'limit must be between 1 and 100'
       });
@@ -847,16 +857,30 @@ router.get('/trips', authenticate, userLimiter, requirePolicy('driver:view-trips
   const { status } = req.query;
   const rawPage = req.query.page;
   const rawLimit = req.query.limit;
-  const parsedPage = parseIntegerQuery(rawPage);
-  const parsedLimit = parseIntegerQuery(rawLimit);
-  if (rawPage !== undefined && (!Number.isInteger(parsedPage) || parsedPage < 1)) {
+
+  if (rawPage !== undefined) {
+    if (typeof rawPage !== 'string' || !/^\d+$/.test(rawPage)) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+  }
+  if (rawLimit !== undefined) {
+    if (typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit)) {
+      return res.status(400).json({ error: 'limit must be a positive integer' });
+    }
+  }
+
+  const parsedPage = rawPage !== undefined ? parseInt(rawPage, 10) : 1;
+  const parsedLimit = rawLimit !== undefined ? parseInt(rawLimit, 10) : 10;
+
+  if (parsedPage < 1) {
     return res.status(400).json({ error: 'page must be a positive integer' });
   }
-  if (rawLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit < 1)) {
+  if (parsedLimit < 1) {
     return res.status(400).json({ error: 'limit must be a positive integer' });
   }
-  const page = parsedPage || 1;
-  const limit = Math.min(100, Math.max(1, parsedLimit || 10));
+
+  const page = parsedPage;
+  const limit = Math.min(100, Math.max(1, parsedLimit));
 
   try {
     const from = (page - 1) * limit;
@@ -1207,14 +1231,22 @@ router.get('/bids', authenticate, userLimiter, requirePolicy('driver:view-bids')
   try {
     const pageParam = req.query.page ?? '1';
     const limitParam = req.query.limit ?? '10';
-    const page = typeof pageParam === 'string' ? Number(pageParam) : NaN;
-    const limit = typeof limitParam === 'string' ? Number(limitParam) : NaN;
 
-    if (!Number.isInteger(page) || page < 1) {
+    if (typeof pageParam !== 'string' || !/^\d+$/.test(pageParam)) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+    if (typeof limitParam !== 'string' || !/^\d+$/.test(limitParam)) {
+      return res.status(400).json({ error: 'limit must be a positive integer' });
+    }
+
+    const page = parseInt(pageParam, 10);
+    const limit = parseInt(limitParam, 10);
+
+    if (page < 1) {
       return res.status(400).json({ error: 'page must be greater than or equal to 1' });
     }
 
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    if (limit < 1 || limit > 100) {
       return res.status(400).json({ error: 'limit must be between 1 and 100' });
     }
 

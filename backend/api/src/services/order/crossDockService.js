@@ -1,4 +1,4 @@
-/**
+**
  * Cross-docking synchronization engine (#6181).
  *
  * A cross-dock transfer lets the driver currently carrying a load ("from_driver")
@@ -132,7 +132,7 @@ export async function findHandoffCandidates({
         .eq('is_active', true)
         .limit(limit * 4);
       if (qErr) {
-        throw new new DomainError(503, { error: 'Failed to query nearby drivers.', details: qErr.message });
+        throw new DomainError(503, { error: 'Failed to query nearby drivers.' });
       }
       drivers = (onlineDrivers || [])
         .map((d) => ({

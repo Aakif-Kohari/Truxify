@@ -497,6 +497,15 @@ export async function invalidateCachedSupabaseProfileAll(userId) {
   } catch (err) {
     logCacheError("invalidateCachedSupabaseProfileAll", err);
   }
+/**
+ * Invalidates all cached profile data for a user across all profile cache subkeys.
+ * Exposed for admin-initiated cache invalidation and external triggers.
+ *
+ * @param {string} userId - The user ID (Supabase profile UUID).
+ * @returns {Promise<void>}
+ */
+export async function invalidateProfileCache(userId) {
+  return invalidateCachedSupabaseProfileAll(userId);
 }
 
 
