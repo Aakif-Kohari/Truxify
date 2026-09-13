@@ -1,4 +1,4 @@
-import axios from 'axios';
+﻿import axios from 'axios';
 import logger from '../middleware/logger.js';
 
 import { predictWorkZoneDelays, generateBypassWaypoint } from './workZoneService.js';
@@ -24,11 +24,17 @@ export async function optimizeWaypoints(start, end, waypoints, departureDate, de
       const lat = Number(point.lat);
       const lng = Number(point.lng);
 
-      if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      if (!Number.isFinite(lat)) {
+      throw new Error(`Invalid latitude for ${label}: must be a finite number`);
+    }
+    if (lat < -90 || lat > 90) {
         throw new Error(`Invalid latitude for ${label}`);
       }
 
-      if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      if (!Number.isFinite(lng)) {
+      throw new Error(`Invalid longitude for ${label}: must be a finite number`);
+    }
+    if (lng < -180 || lng > 180) {
         throw new Error(`Invalid longitude for ${label}`);
       }
 
