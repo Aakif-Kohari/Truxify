@@ -195,7 +195,7 @@ class EventRepository {
       return snapshot;
     } catch (error) {
       logger.error('Failed to get snapshot:', error);
-      return null;
+      throw error;
     }
   }
 
@@ -236,4 +236,3 @@ export async function insertEventsWithTransaction(client, events) {
     throw err;
   }
 }
-
