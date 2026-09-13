@@ -194,7 +194,7 @@ describe('osrm - getRouteEstimate', () => {
     expect(result).toBeNull();
     // After retries are exhausted, error is logged with 'after all retries' message
     expect(mockLogger.error).toHaveBeenCalledWith(
-      { maxRetries: 3, errMessage: 'AbortError' },
+      expect.objectContaining({ maxRetries: 3, errMessage: 'AbortError' }),
       'Fetch error after all retries:'
     );
   });
