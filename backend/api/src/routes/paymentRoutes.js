@@ -383,8 +383,8 @@ router.post(
         ).catch(err => logger.warn('[payments] Driver FCM push failed:', err.message));
       }
 
-    const { data: customerProfile } = await orderRepository.findCustomerWallet(req.user.id);
-    const customerWallet = customerProfile?.polygon_wallet_address ?? null;
+    const { data: legacyCustomerProfile } = await orderRepository.findCustomerWallet(req.user.id);
+    const customerWallet = legacyCustomerProfile?.polygon_wallet_address ?? null;
 
       invalidateBookingCaches().catch(err => logger.error({ err }, 'Failed to invalidate cache on payment lock'));
 
