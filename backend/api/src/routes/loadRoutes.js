@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @openapi
  * components:
  *   schemas:
@@ -218,7 +218,13 @@ router.get('/', authenticate, userLimiter, requirePolicy('load-offer:browse'), v
       query = query.ilike('pickup_address', `%${escapeLike(pickupLocation)}%`);
     }
     if (req.query.destination) {
-      const destination = (Array.isArray(req.query.destination) ? req.query.destination[0] : req.query.destination).trim();
+      if (Array.isArray(req.query.destination)) {
+        return res.status(400).json({ error: 'Repeated destination parameters are not allowed' });
+      }
+      if (typeof req.query.destination !== 'string') {
+        return res.status(400).json({ error: 'destination must be a string' });
+      }
+      const destination = req.query.destination.trim();
       if (!destination) {
         return res.status(400).json({ error: 'destination must not be empty' });
       }
