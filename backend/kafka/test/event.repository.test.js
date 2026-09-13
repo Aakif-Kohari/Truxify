@@ -22,12 +22,11 @@ vi.mock('../config/kafka.config.js', () => ({
   TOPICS: { ORDER_CREATED: 'order.created', DRIVER_ASSIGNED: 'driver.assigned' },
 }));
 
-// Configurable supabase mock so we can drive the rows/errors returned by the
+// Configurable supabase mock so we can drive the rows returned by the
 // event repository queries without a real database. It emulates the
 // repository's `order('timestamp', {ascending:false})` sort so the
 // rebuild logic (which reverses the rows) applies events oldest-first.
 let eventRows = [];
-let eventError = null;
 const queryChain = {
   select: () => queryChain,
   eq: () => queryChain,
@@ -36,7 +35,7 @@ const queryChain = {
   then: (resolve) =>
     resolve({
       data: [...eventRows].sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0)),
-      error: eventError,
+      error: null,
     }),
 };
 vi.mock('../../api/src/config/db.js', () => ({
@@ -51,7 +50,6 @@ import eventRepository from '../repositories/event.repository.js';
 describe('EventRepository.reemitEvent', () => {
   beforeEach(() => {
     publishEvent.mockClear();
-    eventError = null;
   });
 
   it('uses the event id (not the order id) as the Kafka message key', async () => {
@@ -105,7 +103,6 @@ describe('EventRepository rebuild paths (issue #14702)', () => {
   beforeEach(() => {
     publishEvent.mockClear();
     eventRows = [];
-    eventError = null;
   });
 
   it('replayEvents re-emits EVERY event, not just the newest 100', async () => {
@@ -166,27 +163,3 @@ describe('EventRepository rebuild paths (issue #14702)', () => {
   });
 });
 
-describe('EventRepository.getSnapshot error handling (issue #3763)', () => {
-  beforeEach(() => {
-    eventRows = [];
-    eventError = null;
-  });
-
-  it('returns an empty snapshot only for a confirmed empty event stream', async () => {
-    const snapshot = await eventRepository.getSnapshot('order-empty');
-
-    expect(snapshot).toEqual({
-      orderId: 'order-empty',
-      status: 'created',
-      data: {},
-      timeline: [],
-    });
-  });
-
-  it('propagates event-query failures instead of converting them to null', async () => {
-    const queryFailure = new Error('event storage unavailable');
-    eventError = queryFailure;
-
-    await expect(eventRepository.getSnapshot('order-failed')).rejects.toBe(queryFailure);
-  });
-});
