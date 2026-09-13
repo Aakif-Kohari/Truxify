@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockLogger = vi.hoisted(() => ({
   error: vi.fn(),
@@ -236,5 +236,14 @@ describe('routingService - optimizeLtlRoute', () => {
     const result = optimizeLtlRoute(0, 0, tasks);
     expect(result.length).toBe(2);
     expect(result.every(t => tasks.includes(t))).toBe(true);
+  });
+});
+
+
+describe('routingService - non-finite getHaversineDistance guard', () => {
+  it('should throw TypeError when non-finite coordinates are passed to getHaversineDistance', () => {
+    expect(() => getHaversineDistance(NaN, 77.2090, 27.1767, 78.0081)).toThrow(TypeError);
+    expect(() => getHaversineDistance(28.6139, Infinity, 27.1767, 78.0081)).toThrow(TypeError);
+    expect(() => getHaversineDistance(28.6139, 77.2090, undefined, 78.0081)).toThrow(TypeError);
   });
 });
