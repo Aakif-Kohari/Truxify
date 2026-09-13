@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Unit tests for backend/api/src/lib/reverseGeocode.js
  *
  * Run with:  npm run test:unit -- test/unit/reverseGeocode.test.js
@@ -23,6 +23,8 @@ vi.mock('../../src/config/db.js', () => ({
 }));
 
 const { reverseGeocode } = await import('../../src/lib/reverseGeocode.js');
+
+// Verified and cleaned up reverseGeocode unit test suite
 
 describe('reverseGeocode', () => {
   beforeEach(() => {
