@@ -70,7 +70,8 @@ function createSupabaseDb(supabaseClient, loggerAdapter) {
         .upsert([row], {
           onConflict: 'aggregate_id,version',
           ignoreDuplicates: true,
-        });
+        })
+        .select();
     },
 
     async fetchSnapshot(aggregateId) {
@@ -627,7 +628,7 @@ class EventStore {
 }
 
 export default new EventStore();
-export { EventStore, EventStoreVersionConflictError, EventStorePersistenceError };
+export { EventStore, EventStoreVersionConflictError, EventStorePersistenceError, createSupabaseDb };
 
 
 // === Spec 36: ===
