@@ -67,6 +67,7 @@ import userRoutes from './routes/userRoutes.js'
 import voiceRoutes from './routes/voiceRoutes.js'
 import voiceAssistantRoutes from './routes/voice.routes.js'
 import roadConditionRoutes from './routes/roadConditionRoutes.js'
+import biometricAuthRoutes from './routes/biometricAuthRoutes.js'
 import escortWalletRoutes from './routes/escortWalletRoutes.js'
 import mlRoutes from './routes/mlRoutes.js'
 
@@ -550,6 +551,7 @@ app.use('/api/webhooks', webhookRoutes)
 // 🆕 MULTI-PROVIDER ORACLE & VERIFICATION ROUTES
 // ============================================================================
 app.use('/api/verify', verificationRoutes)
+app.use('/api/biometric-auth', biometricAuthRoutes)
 app.use('/api/oracle', oracleRoutes)
 app.use('/api/ml', mlRoutes)
 
