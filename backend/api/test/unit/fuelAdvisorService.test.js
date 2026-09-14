@@ -92,4 +92,41 @@ describe('fuelAdvisorService', () => {
     expect(result.recommended_blend).toBe('B5');
     expect(result.risk_level).toBe('HIGH');
   });
+
+  describe('calculateFuelEfficiency', () => {
+    it('calculates efficiency correctly for valid inputs', () => {
+      const service = new FuelAdvisorService();
+      expect(service.calculateFuelEfficiency(100, 25)).toBe(4);
+      expect(FuelAdvisorService.calculateFuelEfficiency(150, 30)).toBe(5);
+    });
+
+    it('guards against null, undefined, and NaN inputs by returning safe fallback', () => {
+      const service = new FuelAdvisorService();
+      expect(service.calculateFuelEfficiency(null, 25)).toBe(0);
+      expect(service.calculateFuelEfficiency(100, null)).toBe(0);
+      expect(service.calculateFuelEfficiency(undefined, 25)).toBe(0);
+      expect(service.calculateFuelEfficiency(100, undefined)).toBe(0);
+      expect(service.calculateFuelEfficiency(NaN, 25)).toBe(0);
+      expect(service.calculateFuelEfficiency(100, NaN)).toBe(0);
+      expect(service.calculateFuelEfficiency('invalid', 25)).toBe(0);
+    });
+
+    it('guards against zero or negative fuel consumed', () => {
+      const service = new FuelAdvisorService();
+      expect(service.calculateFuelEfficiency(100, 0)).toBe(0);
+      expect(service.calculateFuelEfficiency(100, -10)).toBe(0);
+    });
+
+    it('returns custom fallback when specified', () => {
+      const service = new FuelAdvisorService();
+      expect(service.calculateFuelEfficiency(100, 0, 4.5)).toBe(4.5);
+      expect(service.calculateFuelEfficiency(null, 20, { fallback: 3.8 })).toBe(3.8);
+    });
+
+    it('throws DomainError when throwOnError option is set on invalid/NaN input', () => {
+      const service = new FuelAdvisorService();
+      expect(() => service.calculateFuelEfficiency(100, 0, { throwOnError: true })).toThrow(/Invalid distance or fuel amount/);
+      expect(() => service.calculateFuelEfficiency(NaN, 20, { throwOnError: true })).toThrow(/Invalid distance or fuel amount/);
+    });
+  });
 });

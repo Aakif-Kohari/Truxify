@@ -1,15 +1,65 @@
+import { DomainError } from './order/domainError.js';
+
 /**
- * fuelAdvisorService.js
- * 
- * Intelligent Fueling Advisor service. Analyzes engine load and upcoming
- * weather to recommend the best biodiesel blend.
+ * Calculates fuel efficiency (e.g. km/L) from distance and fuel consumed.
+ * Guards against division by zero, null/undefined inputs, and NaN results.
+ *
+ * @param {number} distance - Distance traveled
+ * @param {number} fuelAmount - Fuel consumed
+ * @param {Object|number} [options] - Safe fallback value or options object ({ fallback, throwOnError })
+ * @returns {number} Safe fuel efficiency value
  */
+export function calculateFuelEfficiency(distance, fuelAmount, options = {}) {
+  const fallback = typeof options === 'number' ? options : (options?.fallback ?? 0);
+  const throwOnError = typeof options === 'object' && options?.throwOnError === true;
+
+  const numDistance = Number(distance);
+  const numFuel = Number(fuelAmount);
+
+  if (
+    distance == null ||
+    fuelAmount == null ||
+    Number.isNaN(numDistance) ||
+    Number.isNaN(numFuel) ||
+    !Number.isFinite(numDistance) ||
+    !Number.isFinite(numFuel) ||
+    numFuel <= 0 ||
+    numDistance < 0
+  ) {
+    if (throwOnError) {
+      throw new DomainError(400, { error: 'Invalid distance or fuel amount for fuel efficiency calculation' });
+    }
+    return fallback;
+  }
+
+  const efficiency = numDistance / numFuel;
+
+  if (Number.isNaN(efficiency) || !Number.isFinite(efficiency)) {
+    if (throwOnError) {
+      throw new DomainError(400, { error: 'Fuel efficiency calculation resulted in NaN' });
+    }
+    return fallback;
+  }
+
+  return efficiency;
+}
 
 export class FuelAdvisorService {
-  constructor({ supabase, weatherService, logger }) {
+  constructor({ supabase, weatherService, logger } = {}) {
     this.supabase = supabase;
     this.weatherService = weatherService;
     this.logger = logger;
+  }
+
+  /**
+   * Calculates fuel efficiency with NaN guard and safe fallback.
+   */
+  calculateFuelEfficiency(distance, fuelAmount, options) {
+    return calculateFuelEfficiency(distance, fuelAmount, options);
+  }
+
+  static calculateFuelEfficiency(distance, fuelAmount, options) {
+    return calculateFuelEfficiency(distance, fuelAmount, options);
   }
 
   /**
