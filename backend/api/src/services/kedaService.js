@@ -8,6 +8,11 @@ class KEDAService {
         this.kafkaLagMetric = process.env.KAFKA_LAG_METRIC || 'kafka_consumergroup_lag';
         this.kafkaTopicLabel = process.env.KAFKA_TOPIC_LABEL || 'topic';
         this.kafkaConsumerGroupLabel = process.env.KAFKA_CONSUMER_GROUP_LABEL || 'consumergroup';
+        this.kedaApiUrl = process.env.KEDA_API_URL || 'http://kubernetes.default.svc';
+        this.kedaApiToken = process.env.KEDA_API_TOKEN || '';
+        this.kedaRequestTimeout = Number(process.env.KEDA_REQUEST_TIMEOUT_MS) || 5000;
+        this.kedaPollInterval = Number(process.env.KEDA_POLL_INTERVAL_MS) || 1000;
+        this.kedaPollTimeout = Number(process.env.KEDA_POLL_TIMEOUT_MS) || 10000;
 
         logger.info('KEDA Service initialized');
     }
@@ -23,6 +28,93 @@ class KEDAService {
     _sanitizePromqlIdentifier(input, fallback) {
         const sanitized = String(input || '').replace(/[^a-zA-Z0-9_:]/g, '');
         return sanitized || fallback;
+    }
+
+    _kedaRequestConfig() {
+        const config = { timeout: this.kedaRequestTimeout };
+        if (this.kedaApiToken) {
+            config.headers = { Authorization: `Bearer ${this.kedaApiToken}` };
+        }
+        return config;
+    }
+
+    async getScaledObjectStatus(namespace, scaledObjectName) {
+        const timestamp = () => new Date().toISOString();
+
+        if (!namespace || !String(namespace).trim()) {
+            return { success: false, error: 'namespace is required', timestamp: timestamp() };
+        }
+
+        if (!scaledObjectName || !String(scaledObjectName).trim()) {
+            return { success: false, error: 'scaledObjectName is required', timestamp: timestamp() };
+        }
+
+        const url = `${this.kedaApiUrl}/apis/keda.sh/v1alpha1/namespaces/${encodeURIComponent(String(namespace).trim())}/scaledobjects/${encodeURIComponent(String(scaledObjectName).trim())}`;
+
+        try {
+            const response = await axios.get(url, this._kedaRequestConfig());
+
+            if (response.status < 200 || response.status >= 300) {
+                logger.error(
+                    { event: 'KEDA_SCALED_OBJECT_STATUS_ERROR', statusCode: response.status },
+                    'KEDA scaled object status request failed',
+                );
+                return {
+                    success: false,
+                    error: `KEDA API returned HTTP ${response.status}`,
+                    statusCode: response.status,
+                    timestamp: timestamp(),
+                };
+            }
+
+            return {
+                success: true,
+                status: response.data?.status || {},
+                data: response.data,
+                timestamp: timestamp(),
+            };
+        } catch (error) {
+            logger.error(
+                { event: 'KEDA_SCALED_OBJECT_STATUS_ERROR', error: error?.message },
+                'KEDA scaled object status request failed',
+            );
+            return {
+                success: false,
+                error: error?.message ?? String(error),
+                timestamp: timestamp(),
+            };
+        }
+    }
+
+    async waitForScaledObjectStatus(namespace, scaledObjectName, predicate, options = {}) {
+        const check = typeof predicate === 'function' ? predicate : () => true;
+        const interval = Number(options.intervalMs) || this.kedaPollInterval;
+        const timeout = Number(options.timeoutMs) || this.kedaPollTimeout;
+        const startedAt = Date.now();
+        let latestResult = null;
+
+        do {
+            latestResult = await this.getScaledObjectStatus(namespace, scaledObjectName);
+            if (latestResult.success && check(latestResult.status, latestResult)) {
+                return { ...latestResult, timedOut: false };
+            }
+
+            if (Date.now() - startedAt >= timeout) {
+                break;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, interval));
+        } while (Date.now() - startedAt < timeout);
+
+        return {
+            ...(latestResult || {
+                success: false,
+                error: 'KEDA status polling did not run',
+            }),
+            success: false,
+            timedOut: true,
+            error: latestResult?.error || 'Timed out waiting for KEDA scaled object status',
+        };
     }
 
     async getMetrics(metricName, query) {
