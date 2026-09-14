@@ -14,6 +14,8 @@ const DELIVERY_IN_PROGRESS_STATUSES = new Set([
   'arriving',
 ]);
 
+const BLOCKCHAIN_TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+
 export const ORACLE_PROVIDER_COUNT = 3;
 export const ORACLE_THRESHOLD = 2;
 
@@ -215,6 +217,20 @@ class OracleService {
   }
 
   async verifyCrossChain(orderId, blockchainHash) {
+    // Keep validation at the service boundary as well as at the HTTP/schema
+    // boundary. This protects internal callers from accidentally forwarding an
+    // arbitrary value to downstream blockchain/RPC code in future revisions.
+    if (typeof blockchainHash !== 'string' || !BLOCKCHAIN_TX_HASH_RE.test(blockchainHash)) {
+      return {
+        verified: false,
+        ipfsHash: null,
+        blockchainHash: typeof blockchainHash === 'string' ? blockchainHash : null,
+        verificationUrl: null,
+        error: 'Invalid blockchain transaction hash',
+        code: 'INVALID_BLOCKCHAIN_HASH',
+      };
+    }
+
     try {
       const { data: order, error } = await this.supabase
         .from('orders')
