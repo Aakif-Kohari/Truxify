@@ -12,6 +12,12 @@ const router = express.Router();
 const blockchainMetrics = new BlockchainMetrics();
 const escalationHandler = new EscalationHandler();
 
+// The index.js mount attaches req.supabase = supabaseAdmin (service-role key,
+// bypasses RLS) so monitoring queries are never limited to the anon client's
+// rows. Fall back to the module-level client so the router still works when
+// mounted standalone (e.g. tests).
+const resolveSupabaseClient = (req) => req.supabase ?? supabase;
+
 router.use((req, _res, next) => {
   req.blockchainMetrics = blockchainMetrics;
   req.escalationHandler = escalationHandler;
@@ -118,7 +124,7 @@ router.get('/events', authenticate, requireRole(['admin', 'support']), async (re
       return res.status(400).json({ error: 'Invalid severity level' });
     }
 
-    let query = supabase
+    let query = resolveSupabaseClient(req)
       .from('blockchain_monitoring_events')
       .select('*')
       .order('created_at', { ascending: false })
@@ -163,7 +169,7 @@ router.get('/escalations/:alertId', authenticate, requireRole(['admin', 'support
       return res.status(400).json({ error: 'Invalid alert ID format' });
     }
 
-    const { data: escalation, error } = await supabase
+    const { data: escalation, error } = await resolveSupabaseClient(req)
       .from('blockchain_escalations')
       .select('*')
       .eq('alert_id', alertId)
