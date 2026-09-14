@@ -121,7 +121,7 @@ describe('Load Offers Routes Integration Tests', () => {
 
       expect(resPage1.status).toBe(200);
       expect(resPage1.body.page).toBe(1);
-      expect(res.body.limit).toBe(10);
+      expect(resPage1.body.limit).toBe(10);
       expect(resPage1.body.total).toBe(25);
       expect(resPage1.body.totalPages).toBe(3);
       expect(resPage1.body.hasNextPage).toBe(true);
