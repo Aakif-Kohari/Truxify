@@ -102,8 +102,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
   }
-  }
-
   void _sendOtp() {
     FocusScope.of(context).unfocus();
     final phone = _phoneController.text.replaceAll(' ', '').trim();
