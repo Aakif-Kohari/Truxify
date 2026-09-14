@@ -27,14 +27,14 @@ export class FuelAdvisorService {
    * @param {number} fuelPricePerLitre current fuel price override
    * @returns {object} estimate result or a validation error
    */
-  tripFuelEstimate(distanceKm, vehicleType = 'truck', fuelPricePerLitre) {
+  tripFuelEstimate(distanceKm, vehicleType, fuelPricePerLitre) {
     const distance = Number(distanceKm);
     const type = String(vehicleType || '').toLowerCase();
     const efficiency = Number(this.fuelEfficiency[type]);
     const configuredPrice = fuelPricePerLitre ?? this.fuelPrices[type] ?? this.fuelPrices.default;
     const fuelPrice = Number(configuredPrice);
 
-    if (!Number.isFinite(distance) || distance < 0) {
+    if (distanceKm == null || !Number.isFinite(distance) || distance < 0) {
       this.logger?.debug('[FuelAdvisorService] Invalid trip distance supplied');
       return { success: false, error: 'distanceKm must be a non-negative finite number' };
     }
@@ -73,7 +73,7 @@ export class FuelAdvisorService {
    * @param {number} fuelPricePerLitre current fuel price override
    * @returns {object} aggregate estimate or the first invalid-leg error
    */
-  routeFuelEstimate(legs = [], vehicleType = 'truck', fuelPricePerLitre) {
+  routeFuelEstimate(legs, vehicleType = 'truck', fuelPricePerLitre) {
     if (!Array.isArray(legs)) {
       this.logger?.debug('[FuelAdvisorService] Invalid route legs supplied');
       return { success: false, error: 'legs must be an array' };
@@ -92,7 +92,9 @@ export class FuelAdvisorService {
 
     const estimates = legs.map((leg, index) => {
       const distance = typeof leg === 'number' ? leg : leg?.distanceKm ?? leg?.distance ?? leg?.distance_km;
-      const price = typeof leg === 'object' ? leg.fuelPricePerLitre ?? fuelPricePerLitre : fuelPricePerLitre;
+      const price = leg && typeof leg === 'object'
+        ? leg.fuelPricePerLitre ?? fuelPricePerLitre
+        : fuelPricePerLitre;
       const estimate = this.tripFuelEstimate(distance, vehicleType, price);
       return { ...estimate, legIndex: index };
     });

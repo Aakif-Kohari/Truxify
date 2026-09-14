@@ -180,6 +180,16 @@ describe('FuelAdvisorService.tripFuelEstimate', () => {
       expect(result.error).toContain('Unsupported vehicle type')
     },
   )
+  it('rejects an omitted vehicle type instead of defaulting to truck', () => {
+    const { service } = makeService()
+
+    const result = service.tripFuelEstimate(100, undefined, 100)
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Unsupported vehicle type: undefined',
+    })
+  })
 
   it.each([null, undefined, NaN, Infinity, -1, 'invalid'])(
     'returns an error when the fuel price is missing or invalid: %p',
@@ -350,6 +360,13 @@ describe('FuelAdvisorService.routeFuelEstimate', () => {
       expect(result).toEqual({ success: false, error: 'legs must be an array' })
     },
   )
+  it('rejects an omitted route instead of defaulting to an empty route', () => {
+    const { service } = makeService()
+
+    const result = service.routeFuelEstimate(undefined, 'truck', 100)
+
+    expect(result).toEqual({ success: false, error: 'legs must be an array' })
+  })
 
   it('returns the invalid leg error and stops aggregation', () => {
     const { service } = makeService()
@@ -374,6 +391,18 @@ describe('FuelAdvisorService.routeFuelEstimate', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toBe('distanceKm must be a non-negative finite number')
+  })
+
+  it('returns an invalid-distance error for a null route leg', () => {
+    const { service } = makeService()
+
+    const result = service.routeFuelEstimate([null], 'truck', 100)
+
+    expect(result).toEqual({
+      success: false,
+      error: 'distanceKm must be a non-negative finite number',
+      legIndex: 0,
+    })
   })
 
   it('returns an error for an unsupported route vehicle type', () => {
