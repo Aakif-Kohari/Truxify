@@ -239,6 +239,32 @@ router.post(
         return res.status(403).json({ error: 'Access Denied: You do not own this order.' });
       }
 
+      // 2. Idempotency — already funded
+      if (order.escrow_status === 'funded') {
+        logger.info(`[payments] Order ${order.order_display_id} already funded — idempotent response`);
+        return res.json({
+          message: 'Payment already locked in escrow.',
+          escrow_status: 'funded',
+          order_display_id: order.order_display_id,
+        });
+      }
+
+      const blockingStatuses = ['released', 'refunded'];
+      if (blockingStatuses.includes(order.escrow_status)) {
+        return res.status(409).json({
+          error: `Cannot lock payment — escrow is already in status: ${order.escrow_status}`,
+        });
+      }
+
+      // 3. The deposit may only be locked while the order is in 'funding'
+      //    state. A lock must never be accepted for an order that was not
+      //    staged for escrow funding.
+      if (order.escrow_status !== 'funding') {
+        return res.status(409).json({
+          error: `Cannot lock payment — escrow must be in 'funding' state, current status: ${order.escrow_status}`,
+        });
+      }
+
       if (!tx_hash && (req.body.amount || req.body.upiReference)) {
         const driverId = order.driver_id;
         if (!driverId) {
@@ -285,32 +311,6 @@ router.post(
           message: 'Payment successfully locked in blockchain escrow.',
           txHash: result?.txHash,
           bookingId: result?.bookingId,
-        });
-      }
-
-      // 2. Idempotency — already funded
-      if (order.escrow_status === 'funded') {
-        logger.info(`[payments] Order ${order.order_display_id} already funded — idempotent response`);
-        return res.json({
-          message: 'Payment already locked in escrow.',
-          escrow_status: 'funded',
-          order_display_id: order.order_display_id,
-        });
-      }
-
-      const blockingStatuses = ['released', 'refunded'];
-      if (blockingStatuses.includes(order.escrow_status)) {
-        return res.status(409).json({
-          error: `Cannot lock payment — escrow is already in status: ${order.escrow_status}`,
-        });
-      }
-
-      // 3. The deposit may only be locked while the order is in 'funding'
-      //    state. A lock must never be accepted for an order that was not
-      //    staged for escrow funding.
-      if (order.escrow_status !== 'funding') {
-        return res.status(409).json({
-          error: `Cannot lock payment — escrow must be in 'funding' state, current status: ${order.escrow_status}`,
         });
       }
 
