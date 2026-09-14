@@ -128,7 +128,7 @@ class KEDAService {
         const interval = Number(options.intervalMs) || this.kedaPollInterval;
         const timeout = Number(options.timeoutMs) || this.kedaPollTimeout;
         const startedAt = Date.now();
-        let latestResult = null;
+        let latestResult;
 
         do {
             latestResult = await this.getScaledObjectStatus(namespace, scaledObjectName);
