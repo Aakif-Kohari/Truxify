@@ -1,4 +1,5 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { authenticate } from '../middleware/auth.js';
 import { validateBody, validateParams } from '../middleware/validate.js';
@@ -49,10 +50,27 @@ const statusLimiter = rateLimit({
 
 // ─── Validation Schemas ───────────────────────────────────────────────────────
 
-const lockPaymentSchema = z.object({
-  bookingId: z.string(), // Order UUID or display ID
-  upiReference: z.string(),
-  amount: z.number().positive(), // Paid amount in paisa
+const lockPaymentSchema = z.union([
+  z.object({
+    order_id: z.string().min(1, 'order_id is required'),
+    tx_hash: z.string().trim().min(1, 'tx_hash is required'),
+    wallet_address: z.string().optional(),
+  }),
+  z.object({
+    bookingId: z.string().min(1),
+    amount: z.number().positive().optional(),
+    tx_hash: z.string().trim().min(1, 'tx_hash is required'),
+    order_id: z.string().optional(),
+  }),
+]);
+
+const upiIntentSchema = z.object({
+  order_id: z.string().min(1, 'order_id is required'),
+  customer_upi_id: z.string().optional(),
+});
+
+const orderIdParamSchema = z.object({
+  orderId: z.string().min(1),
 });
 
 const chargeAndLockSchema = z.object({
@@ -76,6 +94,12 @@ router.post(
   async (req, res) => {
     try {
       const { order_id } = req.body;
+
+      const platformUpiId = process.env.PLATFORM_UPI_ID?.trim();
+      if (!platformUpiId) {
+        logger.error({ event: 'PAYMENT_UPI_NOT_CONFIGURED', orderId: order_id }, '[payments] PLATFORM_UPI_ID is not configured; cannot generate UPI intent');
+        return res.status(503).json({ error: 'UPI payments are not configured on the server.' });
+      }
 
       let order;
       try {
@@ -107,12 +131,6 @@ router.post(
       // Total amount is stored in paisa; convert to INR for display
       const amountPaisa = order.total_amount || 0;
       const amountInr = (amountPaisa / 100).toFixed(2);
-
-      const platformUpiId = process.env.PLATFORM_UPI_ID?.trim();
-      if (!platformUpiId) {
-        logger.error({ event: 'PAYMENT_UPI_NOT_CONFIGURED', orderId: order_id }, '[payments] PLATFORM_UPI_ID is not configured; cannot generate UPI intent');
-        return res.status(503).json({ error: 'UPI payments are not configured on the server.' });
-      }
       const orderRef = order.order_display_id;
 
       const deepLink =
@@ -166,7 +184,8 @@ router.post(
   validateBody(lockPaymentSchema),
   auditLog({ action: 'payment:lock', resourceType: 'escrow' }),
   async (req, res) => {
-    const { order_id, tx_hash } = req.body;
+    const order_id = req.body.order_id || req.body.bookingId;
+    const tx_hash = req.body.tx_hash;
     const lockKey = `payment_lock:${order_id}`;
 
     // lockValue holds the owner UUID returned by acquireLock.
@@ -383,9 +402,6 @@ router.post(
         ).catch(err => logger.warn('[payments] Driver FCM push failed:', err.message));
       }
 
-    const { data: legacyCustomerProfile } = await orderRepository.findCustomerWallet(req.user.id);
-    const customerWallet = legacyCustomerProfile?.polygon_wallet_address ?? null;
-
       invalidateBookingCaches().catch(err => logger.error({ err }, 'Failed to invalidate cache on payment lock'));
 
       return res.status(201).json({
@@ -395,35 +411,67 @@ router.post(
         booking_id: bookingId,
         tx_hash,
       });
+    } catch (err) {
+      if (err instanceof LockAcquisitionError) {
+        // Redis is down — do NOT proceed with the payment mutation.
+        logger.error('[payments] Redis unavailable — refusing payment lock:', err.message);
+        return res.status(503).json({
+          error: 'Payment service temporarily unavailable. Please retry in a moment.',
+        });
+      }
+      logger.error(
+        { event: 'PAYMENT_LOCK_ERROR', requestId: req.requestId || req.id, error: err && err.message },
+        '[payments] lock error',
+      );
+      return res.status(500).json({ error: 'Internal Server Error' });
+    } finally {
+      if (lockValue !== null) {
+        try {
+          await releaseLock(lockKey, lockValue);
+        } catch (releaseErr) {
+          logger.error(
+            { err: releaseErr, lockKey },
+            'Failed to release payment lock'
+          );
+        }
+      }
     }
+  }
+);
 
-    // Convert the paid amount to Matic Wei
-    const amountWei = paisaToMaticWei(amount);
+// ─── GET /api/payments/:orderId/status ───────────────────────────────────────
+/**
+ * Returns current escrow status for an order.
+ * Used by Flutter to poll after submitting the UPI payment.
+ */
+router.get(
+  '/:orderId/status',
+  authenticate,
+  statusLimiter,
+  validateParams(orderIdParamSchema),
+  async (req, res) => {
+    try {
+      const { data: order, error } = await orderRepository.findOrderByIdOrDisplayId(
+        req.params.orderId,
+        'id, order_display_id, customer_id, driver_id, escrow_status, escrow_booking_id, escrow_deposited_at, escrow_released_at, total_amount, status'
+      );
 
-    // Call the smart contract lockPayment on-chain
-    const result = await lockPayment(
-      orderData.order_display_id,
-      customerWallet,
-      driverWallet,
-      amountWei
-    );
+      if (error) {
+        logger.error({ error }, '[payments] Failed to fetch payment status');
+        return res.status(500).json({ error: 'Failed to fetch payment status.' });
+      }
 
-    if (result.error) {
-      logger.error(`[lock-payment] Blockchain lock failed for order ${orderData.order_display_id}: ${result.error}`);
-      return res.status(502).json({
-        error: 'Failed to lock payment in blockchain escrow.',
-        details: result.error
-      });
-    }
+      if (!order) {
+        return res.status(404).json({ error: 'Order not found.' });
+      }
 
-    // Update order status in Postgres
-    const { error: updateErr } = await orderRepository.updateOrder(orderData.id, {
-      escrow_status: 'funded',
-      deposit_tx_hash: result.txHash,
-      escrow_deposited_at: new Date().toISOString(),
-      escrow_booking_id: result.bookingId,
-      upi_reference: upiReference, // Save UPI transaction reference
-    });
+      // Both the customer and assigned driver may poll this
+      const isParticipant =
+        order.customer_id === req.user.id || order.driver_id === req.user.id;
+
+      if (!isParticipant) {
+        return res.status(404).json({ error: 'Order not found.' });
+      }
 
       return res.json({
         order_display_id: order.order_display_id,
@@ -445,20 +493,7 @@ router.post(
       );
       return res.status(500).json({ error: 'Internal Server Error' });
     }
-
-    return res.json({
-      success: true,
-      message: 'Payment successfully locked in blockchain escrow.',
-      txHash: result.txHash,
-      bookingId: result.bookingId
-    });
-  } catch (err) {
-    if (err instanceof DomainError) {
-      return res.status(err.status).json(err.payload);
-    }
-    logger.error('[payments/lock] Exception:', err.message);
-    return res.status(500).json({ error: 'Internal Server Error' });
   }
-});
+);
 
 export default router;
