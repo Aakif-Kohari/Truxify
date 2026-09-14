@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockLogger = vi.hoisted(() => ({
   error: vi.fn(),
@@ -32,6 +32,13 @@ describe('routingService - getHaversineDistance', () => {
     const result = getHaversineDistance(12.9716, 77.5946, 13.0827, 80.2707);
     expect(result).toBeGreaterThan(280);
     expect(result).toBeLessThan(310);
+  });
+
+  it('returns approximately 20000 km for antipodal points', () => {
+    // North Pole to South Pole (~20015 km)
+    const result = getHaversineDistance(90, 0, -90, 0);
+    expect(result).toBeGreaterThan(19900);
+    expect(result).toBeLessThan(20100);
   });
 
   it('handles negative coordinates', () => {
@@ -226,6 +233,15 @@ describe('routingService - optimizeLtlRoute', () => {
     expect(result[0].id).toBe('near');
   });
 
+  it('appends tasks with no reachable dropoff (no prior pickup) at the end', () => {
+    const tasks = [
+      { id: 'd_orphan', orderId: 'orphan', type: 'dropoff', lat: 5, lng: 5 },
+      { id: 'p1', orderId: 'o1', type: 'pickup', lat: 1, lng: 1 },
+    ];
+    const result = optimizeLtlRoute(0, 0, tasks);
+    expect(result[result.length - 1].id).toBe('d_orphan');
+  });
+
   it('appends unvisited tasks as failsafe', () => {
     // Create a situation where no nearest task is found
     const tasks = [
@@ -236,5 +252,14 @@ describe('routingService - optimizeLtlRoute', () => {
     const result = optimizeLtlRoute(0, 0, tasks);
     expect(result.length).toBe(2);
     expect(result.every(t => tasks.includes(t))).toBe(true);
+  });
+});
+
+
+describe('routingService - non-finite getHaversineDistance guard', () => {
+  it('should throw TypeError when non-finite coordinates are passed to getHaversineDistance', () => {
+    expect(() => getHaversineDistance(NaN, 77.2090, 27.1767, 78.0081)).toThrow(TypeError);
+    expect(() => getHaversineDistance(28.6139, Infinity, 27.1767, 78.0081)).toThrow(TypeError);
+    expect(() => getHaversineDistance(28.6139, 77.2090, undefined, 78.0081)).toThrow(TypeError);
   });
 });

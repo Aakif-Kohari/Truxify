@@ -87,13 +87,29 @@ describe('oracleRoutes', () => {
   });
 
   describe('POST /oracle/verify-crosschain', () => {
+    it('rejects malformed transaction hashes before order or oracle lookups', async () => {
+      const res = await request(makeApp())
+        .post('/oracle/verify-crosschain')
+        .send({ orderId: 'o1', blockchainHash: '0xabc' });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        success: false,
+        error: 'blockchainHash must be a 0x-prefixed 32-byte hex string',
+      });
+      expect(dbMock.supabase.from).not.toHaveBeenCalled();
+      expect(svcMock.oracleService.verifyCrossChain).not.toHaveBeenCalled();
+    });
+
     it('returns the cross-chain result on success', async () => {
       dbMock.supabase.from.mockReturnValue({
         select: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'o1', customer_id: 'u1', driver_id: null }, error: null }) })) })),
       });
-      const res = await request(makeApp()).post('/oracle/verify-crosschain').send({ orderId: 'o1', blockchainHash: '0xabc' });
+      const blockchainHash = `0x${'a'.repeat(64)}`;
+      const res = await request(makeApp()).post('/oracle/verify-crosschain').send({ orderId: 'o1', blockchainHash });
       expect(res.status).toBe(200);
       expect(res.body.data.verified).toBe(true);
+      expect(svcMock.oracleService.verifyCrossChain).toHaveBeenCalledWith('o1', blockchainHash);
     });
   });
 });

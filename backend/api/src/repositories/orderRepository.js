@@ -491,6 +491,7 @@ export class OrderRepository {
   // ===================================================================
 
   async findTruckById(id, columns = 'id') {
+    if (!id) return { data: null, error: null };
     return this._retryableQuery(() => this.supabase
       .from('trucks')
       .select(columns)
@@ -499,6 +500,7 @@ export class OrderRepository {
   }
 
   async findTruckWithDetails(id) {
+    if (!id) return { data: null, error: null };
     return this._retryableQuery(() => this.supabase
       .from('trucks')
       .select('id, name, number_plate')
@@ -507,6 +509,7 @@ export class OrderRepository {
   }
 
   async findTrucksByIds(ids) {
+    if (!ids || ids.length === 0) return { data: [], error: null };
     return this._retryableQuery(() => this.supabase
       .from('trucks')
       .select('id, name, number_plate')

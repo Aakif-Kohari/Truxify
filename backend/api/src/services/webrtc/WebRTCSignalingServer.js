@@ -1,4 +1,4 @@
-import { WebSocketServer } from 'ws';
+﻿import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import { verifyAuthToken } from '../../middleware/auth.js';
 import logger from '../../middleware/logger.js';
@@ -10,6 +10,8 @@ class WebRTCSignalingServer {
   constructor(server) {
     const MAX_WS_PAYLOAD_BYTES = parseInt(process.env.WS_MAX_PAYLOAD_BYTES, 10);
     this.wss = new WebSocketServer({ server, path: '/webrtc', maxPayload: Number.isFinite(MAX_WS_PAYLOAD_BYTES) ? MAX_WS_PAYLOAD_BYTES : 4096 });
+    const parsedMaxMeshes = parseInt(process.env.WS_MAX_MESHES, 10);
+    this.maxMeshes = Number.isFinite(parsedMaxMeshes) && parsedMaxMeshes > 0 ? parsedMaxMeshes : 10000;
     this.redis = redisClient;
     this.peers = new Map(); // peerId -> { ws, location, meshId }
     this.meshes = new Map(); // meshId -> Set of peerIds
@@ -50,13 +52,44 @@ class WebRTCSignalingServer {
       }
 
       const peerId = this.generatePeerId();
-      const rawMeshId = url.searchParams.get('meshId');
-      const MAX_MESH_ID_LENGTH = 64;
-      if (rawMeshId != null && rawMeshId.length > MAX_MESH_ID_LENGTH) {
-        ws.close(4001, 'meshId exceeds maximum length');
-        return;
+      // Security fix #4973: Do not allow clients to specify arbitrary meshId directly from query params
+      // Derive or generate a secure server-side meshId
+      // Reuse authorized mesh for the same authenticated user if already active, otherwise create securely
+      let meshId = null;
+      for (const [existingPeerId, peer] of this.peers.entries()) {
+        if (peer.userId === decoded.id && peer.meshId && this.meshes.has(peer.meshId)) {
+          meshId = peer.meshId;
+          break;
+        }
       }
-      const meshId = rawMeshId || this.getOrCreateMesh();
+      if (!meshId) {
+        meshId = this.getOrCreateMesh();
+      }
+      const peerId = this.generatePeerId();
+
+      // Security fix #4973 & CodeRabbit: Prevent arbitrary client meshId and reuse authorized active mesh
+      let meshId = null;
+      for (const [existingPeerId, peer] of this.peers.entries()) {
+        if (peer.userId === decoded.id && peer.meshId && this.meshes.has(peer.meshId)) {
+          meshId = peer.meshId;
+          break;
+        }
+      }
+
+      const limit = this.maxMeshes || 10000;
+      if (!meshId) {
+        if (this.meshes.size >= limit) {
+          logger.warn('WebRTC connection rejected: maximum mesh limit reached');
+          ws.close(4002, 'Maximum mesh limit reached');
+          return;
+        }
+        meshId = this.getOrCreateMesh();
+        if (!meshId) {
+          logger.warn('WebRTC connection rejected: maximum mesh limit reached');
+          ws.close(4002, 'Maximum mesh limit reached');
+          return;
+        }
+      }
 
       // Store peer with authenticated user info
       this.peers.set(peerId, {
@@ -331,6 +364,10 @@ class WebRTCSignalingServer {
   }
 
   getOrCreateMesh() {
+    const limit = this.maxMeshes || 10000;
+    if (this.meshes.size >= limit) {
+      return null;
+    }
     const meshId = `mesh_${crypto.randomUUID()}`;
     this.meshes.set(meshId, new Set());
     return meshId;
@@ -372,7 +409,7 @@ class WebRTCSignalingServer {
 
   async getPeersNearLocation(lat, lng, radius = 10) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      throw new TypeError('getPeersNearLocation: lat and lng must be finite numbers');
+      throw new TypeError('Latitude and longitude must be finite numbers');
     }
     const nearbyPeers = [];
     for (const [peerId, peer] of this.peers) {

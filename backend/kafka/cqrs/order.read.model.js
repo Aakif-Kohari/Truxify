@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin } from '../../api/src/config/db.js';
+import { supabaseAdmin } from '../../api/src/config/db.js';
 import logger from '../../api/src/middleware/logger.js';
 import eventRepository from '../repositories/event.repository.js';
 import {
@@ -152,7 +152,7 @@ class OrderReadModel {
    */
   async buildReadModel(orderId) {
     try {
-      const { data: events, error: eventsError } = await supabase
+      const { data: events, error: eventsError } = await this.client
         .from('event_outbox')
         .select('event_id, event_type, payload, version, created_at')
         .eq('aggregate_id', String(orderId))
@@ -172,7 +172,7 @@ class OrderReadModel {
           version: last.version,
         };
       } else {
-        const { data: order, error: orderError } = await supabase
+        const { data: order, error: orderError } = await this.client
           .from('orders')
           .select('*')
           .eq('id', orderId)
@@ -224,12 +224,6 @@ class OrderReadModel {
 
   async updateReadModel(orderId, snapshot) {
     try {
-      // The snapshot's `data` / `status` / `timeline` shape maps onto the
-      // canonical orders_read_model columns (payload / status / timeline).
-      // event_type and version are derived from the timeline because the
-      // snapshot carries no explicit version. The row is validated against
-      // the canonical schema before the upsert so projection/schema drift
-      // fails loudly instead of writing nonexistent columns.
       const timeline = Array.isArray(snapshot.timeline) ? snapshot.timeline : [];
       const row = assertOrderReadModelRow({
         order_id: orderId,
@@ -241,8 +235,7 @@ class OrderReadModel {
         updated_at: new Date().toISOString(),
       });
 
-      // Upsert read model
-      const { data, error } = await supabase
+      const { data, error } = await this.client
         .from(ORDER_READ_MODEL_TABLE)
         .upsert([row], {
           onConflict: 'order_id',
@@ -253,7 +246,6 @@ class OrderReadModel {
 
       if (error) throw error;
 
-      // Update cache
       this._cacheSet(orderId, data);
 
       return data;
@@ -271,36 +263,31 @@ class OrderReadModel {
     }
 
     try {
-      const { data, error } = await supabase
-        .from('orders_read_model')
+      const { data, error } = await this.client
         .from(ORDER_READ_MODEL_TABLE)
         .select('*')
         .eq('order_id', key)
-        .single();
+        .maybeSingle();
 
-      if (error) {
-        // If not found, rebuild from the authoritative outbox/orders tables.
+      if (error) throw error;
+      if (!data) {
         return await this.buildReadModel(key);
       }
 
       this._cacheSet(key, data);
-
       return data;
     } catch (error) {
       logger.error('Failed to get read model:', error);
-      return null;
+      throw error;
     }
   }
 
   async getAllOrdersReadModel(filters = {}) {
     try {
-      let query = supabase
+      let query = this.client
         .from(ORDER_READ_MODEL_TABLE)
         .select('*');
 
-      // Payload is the full order row snapshot, so filters target payload keys.
-
-      // Apply filters
       if (filters.status) {
         query = query.eq('payload->>status', filters.status);
       }
@@ -359,8 +346,7 @@ class OrderReadModel {
     const stats = {};
 
     for (const status of statuses) {
-      const { count, error } = await supabase
-        .from('orders_read_model')
+      const { count, error } = await this.client
         .from(ORDER_READ_MODEL_TABLE)
         .select('*', { count: 'exact', head: true })
         .eq('payload->>status', status);

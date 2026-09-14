@@ -42,5 +42,23 @@ describe('orderDisplayId - additional edge cases', () => {
   it('parseDisplayId extracts date from valid id', () => {
     const result = parseDisplayId('#FF202608021234567890AB');
     expect(result.valid).toBe(true);
+    expect(result.displayId).toBe('#FF202608021234567890AB');
+  });
+
+  it('parseDisplayId returns valid: false with error for null and undefined input', () => {
+    const resultNull = parseDisplayId(null);
+    expect(resultNull.valid).toBe(false);
+    expect(resultNull.error).toBe('null input');
+
+    const resultUndef = parseDisplayId(undefined);
+    expect(resultUndef.valid).toBe(false);
+    expect(resultUndef.error).toBe('null input');
+  });
+
+  it('parseDisplayId returns valid: false for non-string input', () => {
+    const result = parseDisplayId(12345);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('expected string');
   });
 });
+

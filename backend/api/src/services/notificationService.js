@@ -681,3 +681,89 @@ export async function sendDeliveryOtpNotification(customerId, orderDisplayId, ot
 
   return { success: dbSuccess || fcmResult?.success, fcm: fcmResult };
 }
+
+/**
+ * Helper to fetch a user's FCM token from active devices or profile fallback.
+ */
+export async function getUserFcmToken(userId) {
+  if (!userId) return null;
+  try {
+    const activeDevices = await loadActiveDevices(userId);
+    if (activeDevices.length > 0 && activeDevices[0]?.fcm_token) {
+      return activeDevices[0].fcm_token;
+    }
+    return await getProfileFcmToken(userId);
+  } catch (err) {
+    logger.error({ err }, '[NotificationService] Failed to fetch FCM token for user');
+    return null;
+  }
+}
+
+/**
+ * Check whether an error or status code is considered transient/retryable.
+ */
+export function isTransientError(errorOrCode) {
+  if (!errorOrCode && errorOrCode !== 0) return false;
+  const code = typeof errorOrCode === 'string' || typeof errorOrCode === 'number'
+    ? errorOrCode
+    : (errorOrCode.code ?? errorOrCode.status ?? errorOrCode.statusCode ?? '');
+  
+  if (code === 429 || code === 500 || code === 503 || code === '429' || code === '500' || code === '503') return true;
+  if (code === 400 || code === 401 || code === '400' || code === '401') return false;
+
+  const strCode = String(code);
+  const category = classifyError(strCode);
+  return category === 'transient';
+}
+
+/**
+ * Clear invalid token from profile and deactivate invalid user_devices.
+ */
+export async function clearInvalidToken(userId, token) {
+  let targetUserId = userId;
+  let targetToken = token;
+  if (typeof userId === 'string' && userId.startsWith('token-')) {
+    targetUserId = token;
+    targetToken = userId;
+  }
+  if (!supabaseAdmin) return null;
+  try {
+    if (targetToken) {
+      await deactivateInvalidDevices([], targetUserId || '', [targetToken]);
+    }
+    if (targetUserId) {
+      const { error } = await supabaseAdmin
+        .from('profiles')
+        .update({
+          fcm_token: null,
+          fcm_token_updated_at: new Date().toISOString(),
+        })
+        .eq('id', targetUserId);
+      if (error) {
+        logger.error(`[FCM] Failed to clear profile FCM token: ${error.message}`);
+        return null;
+      }
+    }
+    return true;
+  } catch (err) {
+    logger.error({ err }, '[NotificationService] Failed to clear invalid token');
+    return null;
+  }
+}
+
+export default {
+  sendFcmNotification,
+  sendPushNotification,
+  insertNotification,
+  sendDeliveryOtpNotification,
+  hashDeliveryOtp,
+  verifyDeliveryOtpHash,
+  storeDeliveryOtp,
+  getActiveDeliveryOtp,
+  verifyDeliveryOtp,
+  expireDeliveryOtps,
+  getUserFcmToken,
+  getFcmTokenForUser: getUserFcmToken,
+  isTransientError,
+  clearInvalidToken,
+};

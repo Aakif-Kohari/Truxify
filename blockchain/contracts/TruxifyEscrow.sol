@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -78,6 +78,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         uint256 amount
     );
 
+        event DisputeSettled(bytes32 indexed bookingId, address indexed recipient, uint256 amount);
     event BookingCancelled(
         uint256 indexed bookingId,
         address indexed customer,
@@ -598,7 +599,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
                 releaseTimestamps[driver] = newDeadline;
             }
             emit WithdrawalReady(bookingId, driver, escrowAmount);
-            emit BookingCancelled(bookingId, customer, 0);
+            emit DisputeSettled(bookingId, driver, escrowAmount);
         } else {
             pendingWithdrawals[customer] += escrowAmount;
             releaseTimestamps[customer] = newDeadline;
