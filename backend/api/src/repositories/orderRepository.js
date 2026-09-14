@@ -435,14 +435,6 @@ export class OrderRepository {
       .maybeSingle(), 'findCustomerWallet');
   }
 
-  async findProfileWallet(userId) {
-    return this._retryableQuery(() => this.supabase
-      .from('profiles')
-      .select('polygon_wallet_address')
-      .eq('id', userId)
-      .maybeSingle(), 'findProfileWallet');
-  }
-
   // ===================================================================
   // DRIVER DETAILS (read-only lookups for order context)
   // ===================================================================
