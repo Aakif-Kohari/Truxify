@@ -143,6 +143,11 @@ class KEDAService {
             await new Promise(resolve => setTimeout(resolve, interval));
         } while (Date.now() - startedAt < timeout);
 
+        logger.warn(
+            { namespace, scaledObjectName, timeoutMs: timeout },
+            'Timed out waiting for KEDA scaled object status',
+        );
+
         return {
             ...(latestResult || {
                 success: false,
