@@ -1,75 +1,84 @@
 // backend/api/test/unit/outbox.test.js
 
-const { publish, flush } = require('../../src/outbox'); // Adjust import path if outbox is a class or module
+// Adjust the relative path to target the actual service and relay files in backend/api/src/outbox/
+const outboxService = require('../../src/outbox/service'); // or '../../src/outbox/outboxService'
+const outboxRelay = require('../../src/outbox/relay');     // or '../../src/outbox/outboxRelay'
 
-describe('Outbox Service Unit Tests', () => {
-  let mockRepository;
-  let mockEventPublisher;
+describe('Outbox Unit Tests', () => {
+  let mockDb;
+  let mockPublisher;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
-    mockRepository = {
-      saveEvent: jest.fn(),
+    mockDb = {
+      writeEvent: jest.fn(),
       getPendingEvents: jest.fn(),
-      markAsProcessed: jest.fn(),
-      incrementRetryCount: jest.fn(),
+      markPublished: jest.fn(),
+      markFailed: jest.fn(),
     };
 
-    mockEventPublisher = {
-      publish: jest.fn(),
+    mockPublisher = {
+      publishAndReport: jest.fn(),
     };
   });
 
-  test('publish adds event to outbox', async () => {
-    const eventPayload = { type: 'USER_CREATED', data: { userId: '123' } };
-    mockRepository.saveEvent.mockResolvedValue({ id: 'outbox-1', ...eventPayload, status: 'PENDING' });
+  describe('publish / writeEvent', () => {
+    test('adds event to outbox with pending status', async () => {
+      const payload = { type: 'USER_CREATED', data: { id: 1 } };
+      mockDb.writeEvent.mockResolvedValue({ event_id: 'evt_123', status: 'pending', ...payload });
 
-    const result = await publish(eventPayload, { repository: mockRepository });
+      const result = await outboxService.publish(payload, { db: mockDb });
 
-    expect(mockRepository.saveEvent).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'USER_CREATED',
-      status: 'PENDING'
-    }));
-    expect(result).toHaveProperty('id', 'outbox-1');
+      expect(mockDb.writeEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'USER_CREATED',
+        status: 'pending',
+      }));
+      expect(result).toHaveProperty('event_id', 'evt_123');
+    });
   });
 
-  test('flush sends pending events', async () => {
-    const pendingEvents = [
-      { id: '1', type: 'ORDER_PLACED', payload: { orderId: 99 } },
-      { id: '2', type: 'PAYMENT_RECEIVED', payload: { amount: 50 } },
-    ];
+  describe('flush / relay operations', () => {
+    test('sends pending events and marks them published', async () => {
+      const pendingEvents = [
+        { event_id: 'evt_1', type: 'ORDER_CREATED', status: 'pending' },
+        { event_id: 'evt_2', type: 'PAYMENT_COMPLETED', status: 'pending' },
+      ];
 
-    mockRepository.getPendingEvents.mockResolvedValue(pendingEvents);
-    mockEventPublisher.publish.mockResolvedValue(true);
+      mockDb.getPendingEvents.mockResolvedValue(pendingEvents);
+      mockPublisher.publishAndReport.mockResolvedValue(true);
 
-    await flush({ repository: mockRepository, publisher: mockEventPublisher });
+      await outboxRelay.flush({ db: mockDb, publisher: mockPublisher });
 
-    expect(mockRepository.getPendingEvents).toHaveBeenCalledTimes(1);
-    expect(mockEventPublisher.publish).toHaveBeenCalledTimes(2);
-    expect(mockRepository.markAsProcessed).toHaveBeenCalledWith('1');
-    expect(mockRepository.markAsProcessed).toHaveBeenCalledWith('2');
-  });
+      expect(mockDb.getPendingEvents).toHaveBeenCalledTimes(1);
+      expect(mockPublisher.publishAndReport).toHaveBeenCalledTimes(2);
+      expect(mockDb.markPublished).toHaveBeenCalledWith('evt_1');
+      expect(mockDb.markPublished).toHaveBeenCalledWith('evt_2');
+    });
 
-  test('failed events are retried', async () => {
-    const failedEvent = { id: '3', type: 'INVENTORY_UPDATED', payload: {}, retryCount: 0 };
-    mockRepository.getPendingEvents.mockResolvedValue([failedEvent]);
-    mockEventPublisher.publish.mockRejectedValue(new Error('Broker connection failed'));
+    test('handles publish errors and marks events as failed', async () => {
+      const pendingEvent = { event_id: 'evt_3', type: 'USER_UPDATED', status: 'pending' };
+      mockDb.getPendingEvents.mockResolvedValue([pendingEvent]);
+      
+      const publishError = new Error('Network timeout');
+      mockPublisher.publishAndReport.mockRejectedValue(publishError);
 
-    await expect(flush({ repository: mockRepository, publisher: mockEventPublisher })).rejects.toThrow('Broker connection failed');
+      await outboxRelay.flush({ db: mockDb, publisher: mockPublisher });
 
-    expect(mockEventPublisher.publish).toHaveBeenCalledWith(failedEvent);
-    expect(mockRepository.incrementRetryCount).toHaveBeenCalledWith('3');
-    expect(mockRepository.markAsProcessed).not.toHaveBeenCalled();
-  });
+      expect(mockPublisher.publishAndReport).toHaveBeenCalledWith(pendingEvent);
+      expect(mockDb.markFailed).toHaveBeenCalledWith('evt_3', publishError);
+      expect(mockDb.markPublished).not.toHaveBeenCalled();
+    });
 
-  test('flush with empty outbox is a no-op', async () => {
-    mockRepository.getPendingEvents.mockResolvedValue([]);
+    test('flush with empty outbox is a no-op', async () => {
+      mockDb.getPendingEvents.mockResolvedValue([]);
 
-    await flush({ repository: mockRepository, publisher: mockEventPublisher });
+      await outboxRelay.flush({ db: mockDb, publisher: mockPublisher });
 
-    expect(mockRepository.getPendingEvents).toHaveBeenCalledTimes(1);
-    expect(mockEventPublisher.publish).not.toHaveBeenCalled();
-    expect(mockRepository.markAsProcessed).not.toHaveBeenCalled();
+      expect(mockDb.getPendingEvents).toHaveBeenCalledTimes(1);
+      expect(mockPublisher.publishAndReport).not.toHaveBeenCalled();
+      expect(mockDb.markPublished).not.toHaveBeenCalled();
+      expect(mockDb.markFailed).not.toHaveBeenCalled();
+    });
   });
 });
