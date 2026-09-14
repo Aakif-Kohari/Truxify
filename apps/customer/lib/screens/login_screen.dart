@@ -81,12 +81,27 @@ class _LoginScreenState extends State<LoginScreen> {
         options: const AuthenticationOptions(stickyAuth: true, biometricOnly: true),
       );
 
-      if (authenticated && mounted) {
-        _navigateToShell();
+      if (authenticated) {
+        if (!mounted) return;
+
+        final prefs = await SharedPreferences.getInstance();
+        final bool hasSession = prefs.getBool('is_authenticated') ?? false;
+
+        if (hasSession) {
+          _navigateToShell();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No active session found. Please log in using OTP first.'),
+            ),
+          );
+        }
       }
     } catch (_) {
       // Gracefully fall back to standard OTP form if biometrics are cancelled/fail
     }
+  }
+  }
   }
 
   void _sendOtp() {
