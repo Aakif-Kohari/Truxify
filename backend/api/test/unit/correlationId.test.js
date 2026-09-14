@@ -127,27 +127,111 @@ describe('correlationIdMiddleware', () => {
 });
 
 
-// === Spec 14 test ===
-describe('correlationId context', () => {
-  it('stores in run()', () => {
-    correlationContext.run({ correlationId: 'cid-1' }, () => {
-      expect(correlationContext.getStore()?.correlationId).toBe('cid-1');
+describe('runWithCorrelationId and getCorrelationStore', () => {
+  describe('getCorrelationStore', () => {
+    it('returns an empty object when called outside any correlation context', () => {
+      const store = getCorrelationStore();
+      expect(store).toEqual({});
+      expect(store.correlationId).toBeUndefined();
     });
-  });
-  it('empty outside', () => {
-    expect(correlationContext.getStore()?.correlationId).toBeUndefined();
-  });
 
-  it('multiple nested calls maintain separate contexts', () => {
-    let outerId = null;
-    let innerId = null;
-    runWithCorrelationId('outer-id', () => {
-      outerId = getCorrelationStore()?.correlationId;
-      runWithCorrelationId('inner-id', () => {
-        innerId = getCorrelationStore()?.correlationId;
+    it('returns the current store object containing correlationId within runWithCorrelationId', () => {
+      runWithCorrelationId('test-corr-id-123', () => {
+        const store = getCorrelationStore();
+        expect(store).toEqual({ correlationId: 'test-corr-id-123' });
+        expect(store.correlationId).toBe('test-corr-id-123');
       });
     });
-    expect(outerId).toBe('outer-id');
-    expect(innerId).toBe('inner-id');
+  });
+
+  describe('runWithCorrelationId', () => {
+    it('propagates correlation ID synchronously to child function executions', () => {
+      const result = runWithCorrelationId('sync-id-1', () => {
+        expect(getCorrelationStore().correlationId).toBe('sync-id-1');
+        return 'sync-result';
+      });
+      expect(result).toBe('sync-result');
+      expect(getCorrelationStore().correlationId).toBeUndefined();
+    });
+
+    it('propagates correlation ID to async children across promises and awaits', async () => {
+      await runWithCorrelationId('async-id-1', async () => {
+        expect(getCorrelationStore().correlationId).toBe('async-id-1');
+
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(getCorrelationStore().correlationId).toBe('async-id-1');
+
+        const nestedAsync = async () => {
+          await new Promise((resolve) => setImmediate(resolve));
+          return getCorrelationStore().correlationId;
+        };
+
+        const resolvedId = await nestedAsync();
+        expect(resolvedId).toBe('async-id-1');
+      });
+
+      expect(getCorrelationStore().correlationId).toBeUndefined();
+    });
+
+    it('propagates correlation ID concurrently across Promise.all tasks', async () => {
+      const task1 = runWithCorrelationId('task-1-id', async () => {
+        await new Promise((r) => setTimeout(r, 15));
+        return getCorrelationStore().correlationId;
+      });
+
+      const task2 = runWithCorrelationId('task-2-id', async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        return getCorrelationStore().correlationId;
+      });
+
+      const [res1, res2] = await Promise.all([task1, task2]);
+      expect(res1).toBe('task-1-id');
+      expect(res2).toBe('task-2-id');
+    });
+
+    it('maintains separate contexts for nested calls and restores outer context on exit', () => {
+      let outerBefore = null;
+      let innerValue = null;
+      let outerAfter = null;
+
+      runWithCorrelationId('outer-scope-id', () => {
+        outerBefore = getCorrelationStore().correlationId;
+
+        runWithCorrelationId('inner-scope-id', () => {
+          innerValue = getCorrelationStore().correlationId;
+        });
+
+        outerAfter = getCorrelationStore().correlationId;
+      });
+
+      expect(outerBefore).toBe('outer-scope-id');
+      expect(innerValue).toBe('inner-scope-id');
+      expect(outerAfter).toBe('outer-scope-id');
+      expect(getCorrelationStore().correlationId).toBeUndefined();
+    });
+
+    it('handles undefined or null correlation ID without throwing', () => {
+      runWithCorrelationId(undefined, () => {
+        const store = getCorrelationStore();
+        expect(store).toEqual({ correlationId: undefined });
+      });
+
+      runWithCorrelationId(null, () => {
+        const store = getCorrelationStore();
+        expect(store).toEqual({ correlationId: null });
+      });
+    });
+
+    it('re-throws errors thrown inside fn while still cleaning up the context', () => {
+      expect(() => {
+        runWithCorrelationId('error-id', () => {
+          expect(getCorrelationStore().correlationId).toBe('error-id');
+          throw new Error('Custom execution failure');
+        });
+      }).toThrow('Custom execution failure');
+
+      expect(getCorrelationStore().correlationId).toBeUndefined();
+    });
   });
 });
+

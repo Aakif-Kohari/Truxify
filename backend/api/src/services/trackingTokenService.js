@@ -23,13 +23,14 @@ export class TrackingTokenService {
   }
 
   hashToken(rawToken) {
-    return crypto.createHash('sha256').update(rawToken).digest('hex');
+    if (!rawToken || typeof rawToken !== 'string') return ''
+    return crypto.createHash('sha256').update(rawToken).digest('hex')
   }
 
   getExpiryDate() {
-    const expires = new Date();
-    expires.setDate(expires.getDate() + TOKEN_EXPIRY_DAYS);
-    return expires.toISOString();
+    const expires = new Date()
+    expires.setDate(expires.getDate() + TOKEN_EXPIRY_DAYS)
+    return expires.toISOString()
   }
 
   // Method validating UUID input (for tripId/tokenId)
@@ -43,15 +44,20 @@ export class TrackingTokenService {
 
   async createToken({ orderDisplayId, createdBy }) {
     if (!orderDisplayId) {
+
       this._logger.error({ orderDisplayId }, 'orderDisplayId is required to create a tracking token');
       const err = new Error('orderDisplayId is required');
       err.statusCode = 400;
       throw err;
+
+      this._logger.error({ orderDisplayId }, 'orderDisplayId is required to create a tracking token')
+      throw new Error('orderDisplayId is required')
+
     }
 
-    const rawToken = this.generateRawToken();
-    const tokenHash = this.hashToken(rawToken);
-    const expiresAt = this.getExpiryDate();
+    const rawToken = this.generateRawToken()
+    const tokenHash = this.hashToken(rawToken)
+    const expiresAt = this.getExpiryDate()
 
     const { data, error } = await this._supabase
       .from('tracking_tokens')
@@ -62,23 +68,27 @@ export class TrackingTokenService {
         expires_at: expiresAt,
       })
       .select('id, order_display_id, expires_at, created_at')
-      .single();
+      .single()
 
     if (error) {
-      this._logger.error({ error, orderDisplayId }, 'Failed to create tracking token');
-      throw new Error('Failed to create tracking token');
+      this._logger.error({ error, orderDisplayId }, 'Failed to create tracking token')
+      throw new Error('Failed to create tracking token')
     }
 
-    return { ...data, token: rawToken };
+    return { ...data, token: rawToken }
   }
 
   async validateToken(rawToken) {
     if (!this._supabaseAdmin) {
-      this._logger.error('validateToken requires service-role client');
-      throw new Error('Service-role client required for tracking token validation');
+      this._logger.error('validateToken requires service-role client')
+      throw new Error('Service-role client required for tracking token validation')
     }
 
-    const tokenHash = this.hashToken(rawToken);
+    if (!rawToken || typeof rawToken !== 'string') {
+      return { valid: false, reason: 'invalid_token' }
+    }
+
+    const tokenHash = this.hashToken(rawToken)
 
     const { data: token, error } = await this._supabaseAdmin
       .from('tracking_tokens')

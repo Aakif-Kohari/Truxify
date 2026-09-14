@@ -1,4 +1,4 @@
-import { Server } from "socket.io";
+﻿import { Server } from "socket.io";
 import logger from "../middleware/logger.js";
 import { verifyAuthToken } from "../middleware/auth.js";
 import { supabase } from "../config/db.js";
@@ -233,6 +233,7 @@ export function initLocationServer(httpServer) {
         return;
       }
 
+      // Ensure timestamp is properly parsed via helper
       const gpsTimestamp = parseGpsTimestamp(timestamp);
 
       // 1. Buffer GPS point into the shared telemetry pipeline. Synchronous and
