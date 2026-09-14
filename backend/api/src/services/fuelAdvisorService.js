@@ -6,10 +6,117 @@
  */
 
 export class FuelAdvisorService {
-  constructor({ supabase, weatherService, logger }) {
+  constructor({ supabase, weatherService, logger, fuelPrices = {}, fuelEfficiency = {} }) {
     this.supabase = supabase;
     this.weatherService = weatherService;
     this.logger = logger;
+    this.fuelPrices = fuelPrices;
+    this.fuelEfficiency = {
+      truck: 3.5,
+      van: 8,
+      car: 12,
+      ...fuelEfficiency,
+    };
+  }
+
+  /**
+   * Estimate fuel consumption and cost for one trip leg.
+   *
+   * @param {number} distanceKm distance in kilometres
+   * @param {string} vehicleType vehicle efficiency key
+   * @param {number} fuelPricePerLitre current fuel price override
+   * @returns {object} estimate result or a validation error
+   */
+  tripFuelEstimate(distanceKm, vehicleType, fuelPricePerLitre) {
+    const distance = Number(distanceKm);
+    const type = String(vehicleType || '').toLowerCase();
+    const efficiency = Number(this.fuelEfficiency[type]);
+    const configuredPrice = fuelPricePerLitre ?? this.fuelPrices[type] ?? this.fuelPrices.default;
+    const fuelPrice = Number(configuredPrice);
+
+    if (distanceKm == null || !Number.isFinite(distance) || distance < 0) {
+      this.logger?.debug('[FuelAdvisorService] Invalid trip distance supplied');
+      return { success: false, error: 'distanceKm must be a non-negative finite number' };
+    }
+
+    if (!Number.isFinite(efficiency) || efficiency <= 0) {
+      this.logger?.debug(`[FuelAdvisorService] Unsupported vehicle type: ${vehicleType}`);
+      return { success: false, error: `Unsupported vehicle type: ${vehicleType}` };
+    }
+
+    if (!Number.isFinite(fuelPrice) || fuelPrice < 0) {
+      this.logger?.debug('[FuelAdvisorService] Fuel price is unavailable');
+      return { success: false, error: 'fuelPricePerLitre must be a finite non-negative number' };
+    }
+
+    const fuelUsedLitres = distance / efficiency;
+    const fuelCost = fuelUsedLitres * fuelPrice;
+    const result = {
+      success: true,
+      distanceKm: distance,
+      vehicleType: type,
+      fuelEfficiencyKmPerLitre: efficiency,
+      fuelUsedLitres,
+      fuelPricePerLitre: fuelPrice,
+      fuelCost,
+    };
+
+    this.logger?.debug('[FuelAdvisorService] Trip fuel estimate calculated', result);
+    return result;
+  }
+
+  /**
+   * Combine fuel estimates for all legs in a route.
+   *
+   * @param {Array<object>} legs route legs with distanceKm values
+   * @param {string} vehicleType vehicle efficiency key
+   * @param {number} fuelPricePerLitre current fuel price override
+   * @returns {object} aggregate estimate or the first invalid-leg error
+   */
+  routeFuelEstimate(legs, vehicleType = 'truck', fuelPricePerLitre) {
+    if (!Array.isArray(legs)) {
+      this.logger?.debug('[FuelAdvisorService] Invalid route legs supplied');
+      return { success: false, error: 'legs must be an array' };
+    }
+
+    if (legs.length === 0) {
+      return {
+        success: true,
+        legs: 0,
+        distanceKm: 0,
+        fuelUsedLitres: 0,
+        fuelCost: 0,
+        vehicleType: String(vehicleType || '').toLowerCase(),
+      };
+    }
+
+    const estimates = legs.map((leg, index) => {
+      const distance = typeof leg === 'number' ? leg : leg?.distanceKm ?? leg?.distance ?? leg?.distance_km;
+      const price = leg && typeof leg === 'object'
+        ? leg.fuelPricePerLitre ?? fuelPricePerLitre
+        : fuelPricePerLitre;
+      const estimate = this.tripFuelEstimate(distance, vehicleType, price);
+      return { ...estimate, legIndex: index };
+    });
+    const failure = estimates.find(estimate => !estimate.success);
+
+    if (failure) {
+      return failure;
+    }
+
+    const result = {
+      success: true,
+      legs: estimates.length,
+      distanceKm: estimates.reduce((total, estimate) => total + estimate.distanceKm, 0),
+      fuelUsedLitres: estimates.reduce((total, estimate) => total + estimate.fuelUsedLitres, 0),
+      fuelCost: estimates.reduce((total, estimate) => total + estimate.fuelCost, 0),
+      vehicleType: estimates[0].vehicleType,
+      fuelPricePerLitre: fuelPricePerLitre ?? estimates[0].fuelPricePerLitre,
+      estimates,
+    };
+
+    this.logger?.info('[FuelAdvisorService] Route fuel estimate calculated', result);
+    return result;
   }
 
   /**
