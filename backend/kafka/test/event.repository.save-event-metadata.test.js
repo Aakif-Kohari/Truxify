@@ -15,7 +15,7 @@ const query = {
 };
 
 vi.mock('../../api/src/config/db.js', () => ({
-  supabase: { from: vi.fn(() => query) },
+  supabaseAdmin: { from: vi.fn(() => query) },
 }));
 
 vi.mock('../../api/src/middleware/logger.js', () => ({
