@@ -146,6 +146,84 @@ describe('reverseGeocode', () => {
       const result = await reverseGeocode(28.5562, 77.1000);
       expect(result).toBe('Indira Gandhi International Airport, New Delhi');
     });
+
+    it('handles rate-limiting (429) with Retry-After and successfully retries', async () => {
+      vi.useFakeTimers();
+      mockRedisGet.mockResolvedValue(null);
+      mockRedisSet.mockResolvedValue('OK');
+
+      const headers = new Map();
+      headers.set('Retry-After', '2');
+
+      const response429 = {
+        ok: false,
+        status: 429,
+        headers: {
+          get: (name) => headers.get(name),
+        },
+      };
+
+      const response200 = {
+        ok: true,
+        status: 200,
+        headers: {
+          get: () => null,
+        },
+        json: () => Promise.resolve({
+          address: {
+            road: 'Station Road',
+            city: 'Jaipur',
+          },
+        }),
+      };
+
+      mockFetch.mockResolvedValueOnce(response429).mockResolvedValueOnce(response200);
+
+      const promise = reverseGeocode(26.9124, 75.7873);
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await promise;
+
+      expect(result).toBe('Station Road, Jaipur');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockRedisSet).toHaveBeenCalledWith('geocode:26.912,75.787', 'Station Road, Jaipur', 'EX', 604800);
+      vi.useRealTimers();
+    });
+
+    it('formats address properly with village, town, and state combinations', async () => {
+      mockRedisGet.mockResolvedValue(null);
+      mockRedisSet.mockResolvedValue('OK');
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          address: {
+            village: 'Chomu',
+            state: 'Rajasthan',
+          },
+        }),
+      });
+
+      const result = await reverseGeocode(27.1700, 75.7200);
+      expect(result).toBe('Chomu, Rajasthan');
+    });
+
+    it('handles suburb and town combinations', async () => {
+      mockRedisGet.mockResolvedValue(null);
+      mockRedisSet.mockResolvedValue('OK');
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          address: {
+            suburb: 'Bandra West',
+            town: 'Mumbai Suburban',
+          },
+        }),
+      });
+
+      const result = await reverseGeocode(19.0596, 72.8295);
+      expect(result).toBe('Bandra West, Mumbai Suburban');
+    });
   });
 
   describe('error handling and failure cases', () => {
@@ -186,6 +264,15 @@ describe('reverseGeocode', () => {
 
       expect(result).toBeNull();
       expect(mockRedisSet).not.toHaveBeenCalled();
+    });
+
+    it('catches and logs Redis read/write errors without crashing', async () => {
+      mockRedisGet.mockRejectedValue(new Error('Redis connection refused'));
+
+      const result = await reverseGeocode(19.076, 72.8777);
+
+      expect(result).toBeNull();
+      expect(mockLogger.error).toHaveBeenCalled();
     });
   });
 });
