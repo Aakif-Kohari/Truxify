@@ -69,6 +69,7 @@ import voiceAssistantRoutes from './routes/voice.routes.js'
 import roadConditionRoutes from './routes/roadConditionRoutes.js'
 import escortWalletRoutes from './routes/escortWalletRoutes.js'
 import mlRoutes from './routes/mlRoutes.js'
+import tireAnalyticsRoutes from './routes/tireAnalyticsRoutes.js'
 
 // ============================================================================
 // 🆕 MULTI-PROVIDER ORACLE & VERIFICATION ROUTES
@@ -552,6 +553,7 @@ app.use('/api/webhooks', webhookRoutes)
 app.use('/api/verify', verificationRoutes)
 app.use('/api/oracle', oracleRoutes)
 app.use('/api/ml', mlRoutes)
+app.use('/api/tire-analytics', tireAnalyticsRoutes)
 
 // ============================================================================
 // 🆕 BLOCKCHAIN MONITORING ROUTES
