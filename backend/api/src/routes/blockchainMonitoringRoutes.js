@@ -6,21 +6,22 @@ import { BlockchainMetrics, EscalationHandler } from '../services/blockchain/ind
 
 const router = express.Router();
 
-// Shared service instances. The handlers rely on these being present on the
-// request; nothing else attaches them, so wire them here instead of leaving
-// the endpoints dependent on request properties no middleware sets.
+// Router-local fallback instances — used only when the router is mounted
+// standalone; the index.js /api/blockchain mount attaches the shared
+// singletons to req so these are never clobbered over them.
 const blockchainMetrics = new BlockchainMetrics();
 const escalationHandler = new EscalationHandler();
 
-// The index.js mount attaches req.supabase = supabaseAdmin (service-role key,
-// bypasses RLS) so monitoring queries are never limited to the anon client's
-// rows. Fall back to the module-level client so the router still works when
-// mounted standalone (e.g. tests).
 const resolveSupabaseClient = (req) => req.supabase ?? supabase;
 
+// The index.js mount attaches shared singletons and req.supabase =
+// supabaseAdmin (service-role key, bypasses RLS) so monitoring queries are
+// never limited to the anon client's rows. Only fall back to the router-local
+// instances when nothing else attached them (e.g. standalone/test mounts),
+// so a middleware-attached service is never silently overwritten.
 router.use((req, _res, next) => {
-  req.blockchainMetrics = blockchainMetrics;
-  req.escalationHandler = escalationHandler;
+  req.blockchainMetrics ??= blockchainMetrics;
+  req.escalationHandler ??= escalationHandler;
   next();
 });
 
