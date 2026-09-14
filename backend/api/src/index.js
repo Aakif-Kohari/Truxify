@@ -7,11 +7,8 @@ import http from 'http'
 import dotenv from 'dotenv'
 import path from 'path'
 import { fileURLToPath } from 'url'
-
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-
-const { attachLocationServer } = require("./websocket/locationServer");
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') })
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') })
@@ -70,8 +67,11 @@ import userRoutes from './routes/userRoutes.js'
 import voiceRoutes from './routes/voiceRoutes.js'
 import voiceAssistantRoutes from './routes/voice.routes.js'
 import roadConditionRoutes from './routes/roadConditionRoutes.js'
+import biometricAuthRoutes from './routes/biometricAuthRoutes.js'
 import escortWalletRoutes from './routes/escortWalletRoutes.js'
+import carbonTokenRoutes from './routes/carbonTokenRoutes.js'
 import mlRoutes from './routes/mlRoutes.js'
+import tireAnalyticsRoutes from './routes/tireAnalyticsRoutes.js'
 
 // ============================================================================
 // 🆕 MULTI-PROVIDER ORACLE & VERIFICATION ROUTES
@@ -553,16 +553,34 @@ app.use('/api/webhooks', webhookRoutes)
 // 🆕 MULTI-PROVIDER ORACLE & VERIFICATION ROUTES
 // ============================================================================
 app.use('/api/verify', verificationRoutes)
+app.use('/api/biometric-auth', biometricAuthRoutes)
 app.use('/api/oracle', oracleRoutes)
+app.use('/api/carbon-credits', carbonTokenRoutes)
 app.use('/api/ml', mlRoutes)
+app.use('/api/tire-analytics', tireAnalyticsRoutes)
 
 // ============================================================================
 // 🆕 BLOCKCHAIN MONITORING ROUTES
-// Attach the monitoring services and service-role client per request so the
-// handlers never fall back to the anon-key client (RLS would hide all rows).
-// NOTE: /api/blockchain must be mounted exactly once — a duplicate mount
-// registered earlier shadows this one and leaves req.supabase undefined.
+// Attach the monitoring services and the service-role client per request so
+// the handlers never fall back to the anon-key client (RLS would hide all
+// rows). The blockchainMonitoringRoutes router uses req.supabase (falling
+// back to the module-level client only when unmounted).
+//
+// #14307: /api/blockchain must be mounted EXACTLY once. A duplicate mount
+// registered earlier shadows this one, leaving req.supabase undefined and
+// causing silent auth/RLS failures. The marker below makes a second
+// registration of this router (duplicate import/re-evaluation or a
+// programmatic re-mount) crash the boot instead of failing silently;
+// blockchainMonitoringRoutes.test.js separately enforces that index.js
+// contains only a single literal mount.
 // ============================================================================
+const BLOCKCHAIN_MONITORING_MOUNTED = Symbol.for('truxify.api.blockchainMonitoring.mounted');
+if (blockchainMonitoringRoutes[BLOCKCHAIN_MONITORING_MOUNTED]) {
+  logger.fatal('[startup] /api/blockchain mounted more than once. A duplicate mount shadows the middleware that attaches req.supabase (service-role client). Remove the duplicate mount.')
+  throw new Error('/api/blockchain must be mounted exactly once (#14307).')
+}
+blockchainMonitoringRoutes[BLOCKCHAIN_MONITORING_MOUNTED] = true;
+
 app.use('/api/blockchain', (req, _res, next) => {
   req.blockchainMetrics = blockchainMetrics
   req.escalationHandler = escalationHandler
@@ -806,7 +824,6 @@ async function shutdown(signal) {
   stopWithdrawalSettlementWorker()
   stopOutboxRelayWorker()
   stopStaleOrderWorker()
-  stopDevicePruningWorker()
   fraudDetection.destroy()
   CacheManager.shutdown()
 

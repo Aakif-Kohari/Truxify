@@ -1,4 +1,4 @@
-import { Server } from "socket.io";
+﻿import { Server } from "socket.io";
 import logger from "../middleware/logger.js";
 import { verifyAuthToken } from "../middleware/auth.js";
 import { supabase } from "../config/db.js";
@@ -233,6 +233,7 @@ export function initLocationServer(httpServer) {
         return;
       }
 
+      // Ensure timestamp is properly parsed via helper
       const gpsTimestamp = parseGpsTimestamp(timestamp);
 
       // 1. Buffer GPS point into the shared telemetry pipeline. Synchronous and
@@ -385,13 +386,6 @@ async function verifyDriverToken(socket, next) {
       return next(new Error("Authentication required: no token provided"));
     }
 
-    // In BYPASS_AUTH mode (local dev), skip verification
-    if (process.env.BYPASS_AUTH === "true" && process.env.NODE_ENV !== "production") {
-      socket.data.driverId = socket.handshake.auth.driverId || "dev-driver";
-      socket.data.bookingId = socket.handshake.auth.bookingId || "dev-booking";
-      return next();
-    }
-
     const profile = await verifyAuthToken(token);
 
     if (profile.role !== "driver") {
@@ -429,11 +423,6 @@ async function verifyCustomerToken(socket, next) {
 
     if (!token) {
       return next(new Error("Authentication required: no token provided"));
-    }
-
-    if (process.env.BYPASS_AUTH === "true" && process.env.NODE_ENV !== "production") {
-      socket.data.customerId = socket.handshake.auth.customerId || "dev-customer";
-      return next();
     }
 
     const profile = await verifyAuthToken(token);

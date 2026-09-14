@@ -1,18 +1,10 @@
 {
   "programSignals": [
-    "gssoc",
-    "gssoc 2026",
-    "gssoc'26",
-    "gssoc26",
     "nsoc",
     "nsoc26"
   ],
-  "programLabels": [
-    "gssoc:approved"
-  ],
+  "programLabels": [],
   "inheritLabels": [
-    "gssoc:approved",
-    "ECSoC26",
     "level:beginner",
     "level:intermediate",
     "level:advanced",

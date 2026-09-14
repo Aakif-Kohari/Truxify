@@ -34,7 +34,8 @@
     "typechain": "^8.3.2"
   },
   "scripts": {
-    "prepare": "husky || echo 'husky unavailable — skipping git hook installation'"
+    "prepare": "husky || echo 'husky unavailable — skipping git hook installation'",
+    "unassign:issues": "node .github/scripts/issue-unassigner.js"
   },
   "lint-staged": {
     "backend/**/*.js": [

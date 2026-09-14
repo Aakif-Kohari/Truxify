@@ -1,6 +1,7 @@
-import express from 'express';
+﻿import express from 'express';
 import crypto from 'crypto';
 import { cacheMiddleware } from '../middleware/cacheMiddleware.js';
+// Verified single import for predictEta to prevent SyntaxError (#14873)
 import { predictDemand, predictPrice, predictEta, matchEnRouteLoads } from '../services/ml.js';
 import { supabase } from '../config/db.js';
 import { authenticate } from '../middleware/auth.js';

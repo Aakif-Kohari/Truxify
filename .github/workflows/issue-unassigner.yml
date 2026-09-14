@@ -1,0 +1,61 @@
+name: Issue Auto-Unassigner
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight UTC
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Sweep filter mode'
+        type: choice
+        required: true
+        default: 'no_pr_or_inactive'
+        options:
+          - 'no_pr_or_inactive'
+          - 'no_pr'
+      days_threshold:
+        description: 'Days of inactivity without a PR/updates before unassigning'
+        type: string
+        required: false
+        default: '7'
+      dry_run:
+        description: 'Dry Run (log actions without modifying issues)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  issues: write
+
+concurrency:
+  group: issue-auto-unassigner
+  cancel-in-progress: false
+
+jobs:
+  unassign-inactive:
+    name: Unassign Inactive Issues Without PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Run Issue Auto-Unassigner
+        uses: actions/github-script@v9
+        env:
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          DAYS_THRESHOLD: ${{ inputs.days_threshold || '7' }}
+          MODE: ${{ inputs.mode || 'no_pr_or_inactive' }}
+        with:
+          script: |
+            const unassigner = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/issue-unassigner.js`);
+            await unassigner.run({
+              github,
+              context,
+              core,
+              dryRun: process.env.DRY_RUN === 'true',
+              daysThreshold: parseFloat(process.env.DAYS_THRESHOLD || '7'),
+              mode: process.env.MODE || 'no_pr_or_inactive'
+            });

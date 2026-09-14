@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { escapeLike, escapeSqlLike } from '../../src/lib/escapeLike.js';
 
 describe('escapeLike', () => {
@@ -108,6 +108,15 @@ describe('escapeLike and escapeSqlLike - additional coverage', () => {
     // escapeSqlLike handles [] as well, escapeLike does not
     expect(escapeLike('[test]')).toBe('[test]');
     expect(escapeSqlLike('[test]')).toBe('\\[test\\]');
+  });
+  it('should handle complex mixed wildcards and brackets', () => {
+    expect(escapeSqlLike('user_%[test]\\1')).toBe('user\\_\\%\\[test\\]\\\\1')
+  })
+
+  it('should handle complex nested wildcard and bracket combinations (% _ [ ] \\)', () => {
+    const input = 'user_%[test]\\100%_admin[root]';
+    const expected = 'user\\_\\%\\[test\\]\\\\100\\%\\_admin\\[root\\]';
+    expect(escapeSqlLike(input)).toBe(expected);
   });
 });
 

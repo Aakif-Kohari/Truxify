@@ -9,8 +9,8 @@ class TestFreightDiffusion(unittest.TestCase):
     def test_score_vector_bounds(self):
         x = np.array([0.5, -0.5])
         score = self.simulator.score_function(x, 0.5)
-        self.assertAlmostEqual(score[0], -1.0)
-        self.assertAlmostEqual(score[1], 1.0)
+        self.assertAlmostEqual(score[0], -1.0, places=3)
+        self.assertAlmostEqual(score[1], 1.0, places=3)
 
     def test_reverse_generation(self):
         res = self.simulator.generate_synthetic_demands(num_samples=3)

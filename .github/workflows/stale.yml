@@ -65,9 +65,9 @@ jobs:
 
           # Issues and PRs with these labels are never touched by the sweeper
           
-          exempt-issue-labels: "pinned,security,critical,in-progress,blocked,help wanted,gssoc:approved"
+          exempt-issue-labels: "pinned,security,critical,in-progress,blocked,help wanted"
           
-          exempt-pr-labels: "pinned,security,critical,in-progress,blocked,do-not-merge,gssoc:approved"
+          exempt-pr-labels: "pinned,security,critical,in-progress,blocked,do-not-merge"
 
           # Cap API calls per run to respect GitHub rate limits
           operations-per-run: 100

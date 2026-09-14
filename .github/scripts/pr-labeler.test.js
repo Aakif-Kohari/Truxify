@@ -10,8 +10,6 @@ const {
 } = require('./pr-labeler');
 
 const availableLabels = [
-  'gssoc:approved',
-  'ECSoC26',
   'level:beginner',
   'level:intermediate',
   'type:bug',
@@ -39,21 +37,21 @@ test('findLinkedIssueNumbers extracts closing issue references only', () => {
   );
 });
 
-test('hasProgramSignal detects GSSoC and NSoC mentions', () => {
+test('hasProgramSignal detects active program mentions', () => {
   const rules = {
-    programSignals: ['gssoc', 'nsoc26']
+    programSignals: ['nsoc', 'nsoc26']
   };
 
-  assert.equal(hasProgramSignal({ title: 'feat: add helper', body: 'GSSoC 2026 PR', rules }), true);
+  assert.equal(hasProgramSignal({ title: 'feat: add helper', body: 'nsoc26 PR', rules }), true);
   assert.equal(hasProgramSignal({ title: 'feat: add helper', body: 'regular maintenance', rules }), false);
 });
 
-test('selectLabels inherits approved GSSoC labels from linked issue', () => {
+test('selectLabels inherits approved labels from linked issue', () => {
   const labels = selectLabels({
     prTitle: 'feat: add customer dashboard',
     prBody: 'Fixes #320',
     changedFiles: ['apps/customer/lib/screens/dashboard.dart'],
-    linkedIssueLabels: ['gssoc:approved', 'level:intermediate'],
+    linkedIssueLabels: ['level:intermediate'],
     currentLabels: [],
     availableLabels
   });
@@ -61,28 +59,14 @@ test('selectLabels inherits approved GSSoC labels from linked issue', () => {
   assert.deepEqual(labels, [
     'customer-app',
     'flutter',
-    'gssoc:approved',
     'level:intermediate',
     'type:feature'
   ]);
 });
 
-test('selectLabels adds program label when PR declares GSSoC work', () => {
+test('selectLabels does not add GSSoC or ECSoC labels even if mentioned in PR text', () => {
   const labels = selectLabels({
-    prTitle: 'fix: guard auth token parsing',
-    prBody: 'Submitted under GSSoC 2026.',
-    changedFiles: ['backend/api/src/middleware/auth.js'],
-    linkedIssueLabels: [],
-    currentLabels: [],
-    availableLabels
-  });
-
-  assert.deepEqual(labels, ['backend', 'gssoc:approved', 'type:api', 'type:security']);
-});
-
-test('selectLabels adds program label when PR declares ECSoC work', () => {
-  const labels = selectLabels({
-    prTitle: 'fix: guard auth token parsing',
+    prTitle: 'fix: guard auth token parsing [GSSoC]',
     prBody: 'Submitted under ECSoC 2026.',
     changedFiles: ['backend/api/src/middleware/auth.js'],
     linkedIssueLabels: [],
@@ -90,10 +74,10 @@ test('selectLabels adds program label when PR declares ECSoC work', () => {
     availableLabels
   });
 
-  assert.deepEqual(labels, ['backend', 'ECSoC26', 'type:api', 'type:security']);
+  assert.deepEqual(labels, ['backend', 'type:api', 'type:security']);
 });
 
-test('selectLabels does not add program label by default when neither GSSoC nor ECSoC is mentioned', () => {
+test('selectLabels selects labels for standard bug fix', () => {
   const labels = selectLabels({
     prTitle: 'fix: guard auth token parsing',
     prBody: 'Just fixing a regular bug.',
@@ -106,27 +90,13 @@ test('selectLabels does not add program label by default when neither GSSoC nor 
   assert.deepEqual(labels, ['backend', 'type:api', 'type:security']);
 });
 
-test('selectLabels handles case-insensitivity for GSSoC and ECSoC', () => {
-  const labelsGssoc = selectLabels({
-    prTitle: 'feat: new feature [GsSoC]',
-    availableLabels
-  });
-  assert.equal(labelsGssoc.includes('gssoc:approved'), true);
-
-  const labelsEcsoc = selectLabels({
-    prTitle: 'feat: new feature [ecSoC]',
-    availableLabels
-  });
-  assert.equal(labelsEcsoc.includes('ECSoC26'), true);
-});
-
 test('selectLabels does not duplicate labels already present on the PR', () => {
   const labels = selectLabels({
     prTitle: 'test: cover shipment route',
     prBody: 'Fixes #99',
     changedFiles: ['backend/api/test/unit/shipment.test.js'],
-    linkedIssueLabels: ['gssoc:approved'],
-    currentLabels: ['gssoc:approved', 'backend'],
+    linkedIssueLabels: ['level:intermediate'],
+    currentLabels: ['level:intermediate', 'backend'],
     availableLabels
   });
 
@@ -140,41 +110,36 @@ test('selectLabels ignores labels that do not exist in the repository', () => {
     changedFiles: ['README.md'],
     linkedIssueLabels: ['level:critical'],
     currentLabels: [],
-    availableLabels,
-    detectedPrograms: ['gssoc']
+    availableLabels
   });
 
-  assert.deepEqual(labels, ['gssoc:approved', 'type:docs']);
+  assert.deepEqual(labels, ['type:docs']);
 });
 
-test('selectLabels matches new performance, design, devops, and accessibility prefixes', () => {
+test('selectLabels matches performance, design, devops, and accessibility prefixes', () => {
   const labelsPerf = selectLabels({
     prTitle: 'perf: optimize load time',
-    availableLabels,
-    detectedPrograms: ['gssoc']
+    availableLabels
   });
-  assert.deepEqual(labelsPerf, ['gssoc:approved', 'type:performance']);
+  assert.deepEqual(labelsPerf, ['type:performance']);
 
   const labelsDesign = selectLabels({
     prTitle: 'ui: update dashboard layout',
-    availableLabels,
-    detectedPrograms: ['gssoc']
+    availableLabels
   });
-  assert.deepEqual(labelsDesign, ['gssoc:approved', 'type:design']);
+  assert.deepEqual(labelsDesign, ['type:design']);
 
   const labelsDevOps = selectLabels({
     prTitle: 'ci: add test action',
-    availableLabels,
-    detectedPrograms: ['gssoc']
+    availableLabels
   });
-  assert.deepEqual(labelsDevOps, ['gssoc:approved', 'type:devops']);
+  assert.deepEqual(labelsDevOps, ['type:devops']);
 
   const labelsA11y = selectLabels({
     prTitle: 'a11y: add screen reader labels',
-    availableLabels,
-    detectedPrograms: ['gssoc']
+    availableLabels
   });
-  assert.deepEqual(labelsA11y, ['gssoc:approved', 'type:accessibility']);
+  assert.deepEqual(labelsA11y, ['type:accessibility']);
 });
 
 test('run function adds merge conflicts label, removes merge ready label, and comments if PR is not mergeable', async () => {
@@ -326,13 +291,13 @@ test('run function removes merge conflicts label and adds merge ready label if P
   assert.equal(addLabelsCalled, true);
 });
 
-test('run function detects GSSoC program signal from linked issue title/body', async () => {
+test('run function labels PR based on linked issue and path rules without GSSoC/ECSoC comments', async () => {
   let addedLabels = [];
+  let commentsCreated = [];
   const mockGithub = {
     paginate: async (fn, params) => {
-      if (fn === mockGithub.rest.issues.listLabelsForRepo) return [{ name: 'gssoc:approved' }];
-      if (fn === mockGithub.rest.pulls.listFiles) return [];
-      if (fn === mockGithub.rest.issues.listComments) return [];
+      if (fn === mockGithub.rest.issues.listLabelsForRepo) return [{ name: 'customer-app' }, { name: 'flutter' }, { name: 'type:feature' }];
+      if (fn === mockGithub.rest.pulls.listFiles) return [{ filename: 'apps/customer/lib/main.dart' }];
       return [];
     },
     rest: {
@@ -340,7 +305,7 @@ test('run function detects GSSoC program signal from linked issue title/body', a
         get: async () => ({
           data: {
             number: 320,
-            title: 'fix: resolve auth issue',
+            title: 'feat: add feature',
             body: 'Fixes #105',
             labels: [],
             mergeable: true
@@ -354,18 +319,19 @@ test('run function detects GSSoC program signal from linked issue title/body', a
             return {
               data: {
                 number: 105,
-                title: '[GSSOC 2026] Fix auth token error',
-                body: 'This issue is for GSSoC contributors.',
-                labels: [{ name: 'type:bug' }]
+                title: 'Customer issue',
+                body: 'Regular task description.',
+                labels: [{ name: 'level:beginner' }]
               }
             };
           }
           return { data: { labels: [] } };
         },
         listLabelsForRepo: () => {},
-        listComments: () => {},
         createLabel: async () => {},
-        createComment: async () => {},
+        createComment: async ({ body }) => {
+          commentsCreated.push(body);
+        },
         addLabels: async ({ labels }) => {
           addedLabels = labels;
         }
@@ -396,80 +362,11 @@ test('run function detects GSSoC program signal from linked issue title/body', a
     dryRun: false
   });
 
-  assert.equal(addedLabels.includes('gssoc:approved'), true);
-});
-
-test('run function detects ECSoC program signal from linked issue title/body', async () => {
-  let addedLabels = [];
-  const mockGithub = {
-    paginate: async (fn, params) => {
-      if (fn === mockGithub.rest.issues.listLabelsForRepo) return [{ name: 'ECSoC26' }];
-      if (fn === mockGithub.rest.pulls.listFiles) return [];
-      if (fn === mockGithub.rest.issues.listComments) return [];
-      return [];
-    },
-    rest: {
-      pulls: {
-        get: async () => ({
-          data: {
-            number: 400,
-            title: 'feat: add customer screen',
-            body: 'Closes #200',
-            labels: [],
-            mergeable: true
-          }
-        }),
-        listFiles: () => {}
-      },
-      issues: {
-        get: async ({ issue_number }) => {
-          if (issue_number === 200) {
-            return {
-              data: {
-                number: 200,
-                title: 'feat: customer dashboard',
-                body: 'Task under ECSoC 2026 program.',
-                labels: []
-              }
-            };
-          }
-          return { data: { labels: [] } };
-        },
-        listLabelsForRepo: () => {},
-        listComments: () => {},
-        createLabel: async () => {},
-        createComment: async () => {},
-        addLabels: async ({ labels }) => {
-          addedLabels = labels;
-        }
-      }
-    }
-  };
-
-  const mockContext = {
-    payload: {
-      pull_request: {
-        number: 400,
-        labels: []
-      }
-    },
-    repo: { owner: 'owner', repo: 'repo' }
-  };
-
-  const mockCore = {
-    info: () => {},
-    warning: () => {}
-  };
-
-  await run({
-    github: mockGithub,
-    context: mockContext,
-    core: mockCore,
-    rulesPath: undefined,
-    dryRun: false
-  });
-
-  assert.equal(addedLabels.includes('ECSoC26'), true);
+  // No automated comment asking about GSSoC or ECSoC should be created
+  assert.equal(commentsCreated.length, 0);
+  assert.equal(addedLabels.includes('customer-app'), true);
+  assert.equal(addedLabels.includes('flutter'), true);
+  assert.equal(addedLabels.includes('type:feature'), true);
 });
 
 test('pickDominantTypeLabel picks label with highest file-change score', () => {
