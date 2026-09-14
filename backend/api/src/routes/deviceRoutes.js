@@ -112,5 +112,3 @@ router.post('/unregister', authenticate, deviceLimiter, validateBody(unregisterD
 router.get('/platforms', authenticate, getDevicePlatforms);
 
 export default router;
-
-// Resolves #2058: Rate limit device registration
