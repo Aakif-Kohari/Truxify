@@ -44,9 +44,16 @@ class BlockchainMonitor {
     this.pollTimer = null;
     this.processedEventKeys = new Set();
     this.eventHandlers = {};
+    // BLOCKCHAIN_MONITOR_START_BLOCK is the first block to scan (inclusive).
+    // Store it as-is; we will set lastBlockScanned = startBlock - 1 so that
+    // the first scanBlockRange call includes startBlock itself.
     this.startBlock = deps.startBlock !== undefined
       ? deps.startBlock
-      : (process.env.BLOCKCHAIN_START_BLOCK ? parseInt(process.env.BLOCKCHAIN_START_BLOCK, 10) : null);
+      : (process.env.BLOCKCHAIN_MONITOR_START_BLOCK
+          ? parseInt(process.env.BLOCKCHAIN_MONITOR_START_BLOCK, 10)
+          : (process.env.BLOCKCHAIN_START_BLOCK
+              ? parseInt(process.env.BLOCKCHAIN_START_BLOCK, 10)
+              : null));
     this.reorgRewindBlocks = deps.reorgRewindBlocks !== undefined
       ? deps.reorgRewindBlocks
       : parseInt(process.env.BLOCKCHAIN_REORG_REWIND_BLOCKS || '12', 10);
@@ -76,10 +83,16 @@ class BlockchainMonitor {
         let startFromBlock = null;
 
         if (checkpoint && checkpoint.blockNumber !== undefined && checkpoint.blockNumber !== null) {
-          logger.info(`[BlockchainMonitor] Resuming from checkpoint block: ${checkpoint.blockNumber}`);
-
-          // Reorg safety: verify block hash at checkpoint if chain is past that block
-          if (checkpoint.blockHash && checkpoint.blockNumber <= currentBlock && typeof this.provider.getBlock === 'function') {
+          // Checkpoint hash must exist before we trust it. A null hash means it was
+          // never verified — treat it as untrusted and rewind conservatively.
+          if (!checkpoint.blockHash) {
+            const rewindTo = Math.max(0, checkpoint.blockNumber - this.reorgRewindBlocks);
+            logger.warn(
+              `[BlockchainMonitor] Checkpoint at block ${checkpoint.blockNumber} has no verified hash. Rewinding ${this.reorgRewindBlocks} blocks to ${rewindTo} to be safe.`
+            );
+            startFromBlock = rewindTo;
+          } else if (checkpoint.blockNumber <= currentBlock && typeof this.provider.getBlock === 'function') {
+            // Reorg safety: verify that the checkpoint block hash still matches canonical chain.
             try {
               const chainBlock = await this.provider.getBlock(checkpoint.blockNumber);
               if (chainBlock && chainBlock.hash && chainBlock.hash.toLowerCase() !== checkpoint.blockHash.toLowerCase()) {
@@ -89,24 +102,31 @@ class BlockchainMonitor {
                 );
                 startFromBlock = rewindTo;
               } else {
+                logger.info(`[BlockchainMonitor] Resuming from checkpoint block: ${checkpoint.blockNumber}`);
                 startFromBlock = checkpoint.blockNumber;
               }
             } catch (err) {
-              logger.warn(`[BlockchainMonitor] Error verifying block hash at checkpoint: ${err.message}`);
-              startFromBlock = checkpoint.blockNumber;
+              // Cannot verify hash — rewind conservatively; do not trust unverified checkpoint.
+              const rewindTo = Math.max(0, checkpoint.blockNumber - this.reorgRewindBlocks);
+              logger.warn(`[BlockchainMonitor] Error verifying block hash at checkpoint (${err.message}). Rewinding to ${rewindTo}.`);
+              startFromBlock = rewindTo;
             }
           } else {
+            logger.info(`[BlockchainMonitor] Resuming from checkpoint block: ${checkpoint.blockNumber}`);
             startFromBlock = checkpoint.blockNumber;
           }
         } else if (this.startBlock !== null && this.startBlock !== undefined) {
+          // BLOCKCHAIN_MONITOR_START_BLOCK is the first block to scan (inclusive).
+          // Set lastBlockScanned to startBlock - 1 so the next scan begins at startBlock.
           logger.info(`[BlockchainMonitor] Using configured start block: ${this.startBlock}`);
-          startFromBlock = this.startBlock;
+          startFromBlock = Math.max(0, this.startBlock - 1);
         } else {
+          // No checkpoint and no configured start block: begin at current head.
           startFromBlock = currentBlock;
         }
 
         this.lastBlockScanned = startFromBlock;
-        logger.info(`[BlockchainMonitor] Initialized. Current block: ${currentBlock}, initial scan block: ${startFromBlock}`);
+        logger.info(`[BlockchainMonitor] Initialized. Current block: ${currentBlock}, initial scan from after block: ${startFromBlock}`);
         return true;
       } catch (err) {
         logger.error('[BlockchainMonitor] Initialization failed:', err.message);
@@ -132,18 +152,28 @@ class BlockchainMonitor {
       try {
         this.setupEventHandlers();
 
-        // Historical backfill: scan from lastBlockScanned up to current chain head
+        // Historical backfill: scan from lastBlockScanned up to current chain head.
+        // The checkpoint is only advanced if the full scan and all handlers succeed.
         if (this.provider && typeof this.provider.getBlockNumber === 'function') {
           const currentBlock = await this.provider.getBlockNumber();
           if (currentBlock > this.lastBlockScanned) {
             logger.info(`[BlockchainMonitor] Performing historical backfill from block ${this.lastBlockScanned + 1} to ${currentBlock}...`);
+            // scanBlockRange throws on failure — if it throws we do NOT save checkpoint.
             await this.scanBlockRange(this.lastBlockScanned + 1, currentBlock);
+            // Only fetch block hash and save checkpoint after a successful full scan.
             let blockHash = null;
             if (typeof this.provider.getBlock === 'function') {
               const block = await this.provider.getBlock(currentBlock).catch(() => null);
               blockHash = block?.hash || null;
             }
-            await this.saveCheckpoint(currentBlock, blockHash);
+            // Only persist if we have a valid block hash; a null hash must not be persisted.
+            if (blockHash) {
+              await this.saveCheckpoint(currentBlock, blockHash);
+            } else {
+              // Update in-memory cursor but do not persist an unverified checkpoint.
+              this.lastBlockScanned = currentBlock;
+              logger.warn('[BlockchainMonitor] Backfill complete but block hash unavailable — in-memory cursor advanced; checkpoint not persisted.');
+            }
           }
         }
 
@@ -196,19 +226,58 @@ class BlockchainMonitor {
 
         this.isScanning = true;
         const currentBlock = await this.provider.getBlockNumber();
+
         if (currentBlock > this.lastBlockScanned) {
-          await this.scanBlockRange(this.lastBlockScanned + 1, currentBlock);
+          // Reorg check: verify block hash at the current checkpoint during normal polling.
+          if (this.lastBlockHash && typeof this.provider.getBlock === 'function') {
+            try {
+              const checkpointChainBlock = await this.provider.getBlock(this.lastBlockScanned);
+              if (
+                checkpointChainBlock &&
+                checkpointChainBlock.hash &&
+                checkpointChainBlock.hash.toLowerCase() !== this.lastBlockHash.toLowerCase()
+              ) {
+                const rewindTo = Math.max(0, this.lastBlockScanned - this.reorgRewindBlocks);
+                logger.warn(
+                  `[BlockchainMonitor] Reorg detected during polling at block ${this.lastBlockScanned}! Rewinding ${this.reorgRewindBlocks} blocks to ${rewindTo}.`
+                );
+                this.lastBlockScanned = rewindTo;
+                this.lastBlockHash = null;
+                // Reorg-rewound events may be orphaned: they were stored under old canonical
+                // hashes. Their (txHash, logIndex) keys remain in processedEventKeys so they
+                // are NOT re-inserted, which is correct — we only re-scan canonical blocks.
+              }
+            } catch (hashErr) {
+              logger.warn(`[BlockchainMonitor] Polling reorg check failed: ${hashErr.message}. Proceeding conservatively.`);
+            }
+          }
+
+          // Scan from current lastBlockScanned (which may have been rewound above).
+          const fromBlock = this.lastBlockScanned + 1;
+          if (fromBlock > currentBlock) return; // nothing new after rewind
+
+          // scanBlockRange throws on failure — the checkpoint is only advanced on full success.
+          await this.scanBlockRange(fromBlock, currentBlock);
+
           let blockHash = null;
           if (typeof this.provider.getBlock === 'function') {
             const block = await this.provider.getBlock(currentBlock).catch(() => null);
             blockHash = block?.hash || null;
           }
-          await this.saveCheckpoint(currentBlock, blockHash);
+
+          // Only persist checkpoint with a valid, verified block hash.
+          if (blockHash) {
+            await this.saveCheckpoint(currentBlock, blockHash);
+          } else {
+            this.lastBlockScanned = currentBlock;
+            logger.warn('[BlockchainMonitor] Block hash unavailable — in-memory cursor advanced; checkpoint not persisted.');
+          }
         }
       } catch (err) {
         logger.error('[BlockchainMonitor] Polling error:', err.message);
         this.lastError = err.message;
         Sentry.captureException(err);
+        // lastBlockScanned is NOT advanced on error — the next tick will retry from the same position.
       } finally {
         this.isScanning = false;
       }
@@ -223,37 +292,41 @@ class BlockchainMonitor {
         return;
       }
 
-      try {
-        const CHUNK_SIZE = 500;
-        for (let start = fromBlock; start <= toBlock; start += CHUNK_SIZE) {
-          const end = Math.min(start + CHUNK_SIZE - 1, toBlock);
-          const logs = await this.provider.getLogs({
-            address: this.contractAddress,
-            fromBlock: start,
-            toBlock: end,
-          });
+      // Any error here propagates to the caller; the caller must NOT advance the
+      // checkpoint if this throws.
+      const CHUNK_SIZE = 500;
+      for (let start = fromBlock; start <= toBlock; start += CHUNK_SIZE) {
+        const end = Math.min(start + CHUNK_SIZE - 1, toBlock);
+        const logs = await this.provider.getLogs({
+          address: this.contractAddress,
+          fromBlock: start,
+          toBlock: end,
+        });
 
-          for (const log of logs) {
-            await this.processLog(log);
-          }
+        for (const log of logs) {
+          await this.processLog(log);
         }
-
-        this.metricsService?.recordBlockScan(toBlock - fromBlock + 1);
-        this.lastSuccessfulScan = new Date().toISOString();
-      } catch (err) {
-        logger.error(`[BlockchainMonitor] Error scanning blocks ${fromBlock}-${toBlock}:`, err.message);
-        this.metricsService?.recordBlockScanError();
-        this.lastError = err.message;
-        Sentry.captureException(err);
       }
+
+      this.metricsService?.recordBlockScan(toBlock - fromBlock + 1);
+      this.lastSuccessfulScan = new Date().toISOString();
     });
   }
 
+  /**
+   * Atomically check whether this event key was already processed.
+   *
+   * The in-memory Set is only populated AFTER a successful DB insert (in storeEvent),
+   * so it cannot produce race-condition false-positives during parallel replays.
+   * DB lookup is the authoritative deduplication gate.
+   */
   async isEventProcessed(eventKey, txHash, logIndex) {
+    // Fast path: already confirmed in this process lifetime.
     if (this.processedEventKeys.has(eventKey)) {
       return true;
     }
 
+    // Injectable deduplication store (tests / custom persistence).
     if (this.checkpointStore?.isEventProcessed) {
       const exists = await this.checkpointStore.isEventProcessed(txHash, logIndex);
       if (exists) {
@@ -262,6 +335,7 @@ class BlockchainMonitor {
       }
     }
 
+    // Authoritative DB check.
     const client = supabaseAdmin || supabase;
     if (client?.from && txHash) {
       try {
@@ -560,18 +634,19 @@ class BlockchainMonitor {
 
   // ── Event & Checkpoint Persistence ───────────────────────────────────────
 
-  async storeEvent(alert, log) {
+  async storeEvent(alert, _log) {
     const eventKey = alert.eventKey || `${alert.txHash}:${alert.logIndex ?? 0}`;
-    this.processedEventKeys.add(eventKey);
 
     if (this.checkpointStore?.storeEvent) {
       await this.checkpointStore.storeEvent(alert);
+      // Only add to in-memory set AFTER successful persistence (atomic deduplication).
+      this.processedEventKeys.add(eventKey);
       return;
     }
 
-    try {
-      const client = supabaseAdmin || supabase;
-      if (client?.from) {
+    const client = supabaseAdmin || supabase;
+    if (client?.from) {
+      try {
         await client
           .from('blockchain_monitoring_events')
           .insert([{
@@ -580,13 +655,30 @@ class BlockchainMonitor {
             data: alert,
             created_at: new Date().toISOString(),
           }]);
+        // Only mark as processed AFTER the DB insert succeeds (atomic deduplication).
+        this.processedEventKeys.add(eventKey);
+      } catch (err) {
+        logger.error('[BlockchainMonitor] Failed to store event:', err.message);
+        // Do NOT add to processedEventKeys — the event was not persisted;
+        // the next scan/replay will correctly retry it.
+        throw err;
       }
-    } catch (err) {
-      logger.error('[BlockchainMonitor] Failed to store event:', err.message);
+    } else {
+      // No persistence available — still mark to avoid duplicate handler calls
+      // within this process session.
+      this.processedEventKeys.add(eventKey);
     }
   }
 
   async saveCheckpoint(blockNumber, blockHash) {
+    // Refuse to persist a checkpoint without a verified block hash to prevent
+    // future restarts from trusting an unverified position.
+    if (!blockHash) {
+      logger.warn('[BlockchainMonitor] saveCheckpoint called with null blockHash — refusing to persist unverified checkpoint.');
+      this.lastBlockScanned = blockNumber;
+      return;
+    }
+
     this.lastBlockScanned = blockNumber;
     this.lastBlockHash = blockHash;
     this.lastSuccessfulScan = new Date().toISOString();
@@ -637,7 +729,7 @@ class BlockchainMonitor {
         if (!error && data && data.length > 0 && data[0]?.data?.blockNumber !== undefined) {
           return {
             blockNumber: Number(data[0].data.blockNumber),
-            blockHash: data[0].data.blockHash,
+            blockHash: data[0].data.blockHash || null,
           };
         }
       } catch (err) {
@@ -653,7 +745,7 @@ class BlockchainMonitor {
           if (parsed.blockNumber !== undefined) {
             return {
               blockNumber: Number(parsed.blockNumber),
-              blockHash: parsed.blockHash,
+              blockHash: parsed.blockHash || null,
             };
           }
         }

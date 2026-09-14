@@ -92,6 +92,8 @@ class AlertRouter {
     if (alert.driver) text += `\n*Driver:* ${alert.driver}`;
     if (alert.customer) text += `\n*Customer:* ${alert.customer}`;
     if (alert.amount) text += `\n*Amount:* ${alert.amount}`;
+    if (alert.refundAmount) text += `\n*Refund Amount:* ${alert.refundAmount}`;
+    if (alert.driverAmount) text += `\n*Driver Amount:* ${alert.driverAmount}`;
     if (alert.wallet) text += `\n*Wallet:* ${alert.wallet}`;
     if (alert.txHash) text += `\n*TX:* \`${alert.txHash}\``;
 
@@ -136,6 +138,8 @@ class AlertRouter {
     if (alert.driver) lines.push(`  Driver: ${alert.driver}`);
     if (alert.customer) lines.push(`  Customer: ${alert.customer}`);
     if (alert.amount) lines.push(`  Amount: ${alert.amount}`);
+    if (alert.refundAmount) lines.push(`  Refund Amount: ${alert.refundAmount}`);
+    if (alert.driverAmount) lines.push(`  Driver Amount: ${alert.driverAmount}`);
     if (alert.wallet) lines.push(`  Wallet: ${alert.wallet}`);
     if (alert.shipmentId) lines.push(`  Shipment ID: ${alert.shipmentId}`);
     if (alert.claimId) lines.push(`  Claim ID: ${alert.claimId}`);

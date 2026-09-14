@@ -171,6 +171,8 @@ import BlockchainMetrics from './services/blockchain/blockchainMetrics.js'
 import EscalationHandler from './services/blockchain/escalationHandler.js'
 import AlertRouter from './services/blockchain/alertRouter.js'
 import BlockchainMonitor from './services/blockchain/blockchainMonitor.js'
+import StateDivergenceDetector from './services/blockchain/stateDivergenceDetector.js'
+import BatchCallBuilder from './services/blockchain/batchCallBuilder.js'
 import {
   startWithdrawalSettlementWorker,
   stopWithdrawalSettlementWorker
@@ -209,6 +211,13 @@ const blockchainMonitor = new BlockchainMonitor({
   alertRouter,
   metricsService: blockchainMetrics,
   escalationHandler,
+})
+const batchCallBuilder = new BatchCallBuilder({})
+const stateDivergenceDetector = new StateDivergenceDetector({
+  disableMonitoring: true, // started explicitly below in server.listen()
+  alertRouter,
+  escalationHandler,
+  batchCallBuilder,
 })
 
 // ============================================================================
@@ -789,16 +798,29 @@ server.listen(PORT, () => {
   startWithdrawalSettlementWorker()
   startOutboxRelayWorker()
 
-  // Start BlockchainMonitor during API startup
+  // Start BlockchainMonitor during API startup.
+  // Worker health flag is set only after successful initialization.
+  let blockchainMonitorStarted = false
   blockchainMonitor.initialize().then((initialized) => {
     if (initialized) {
-      blockchainMonitor.startListening().catch((err) => {
-        logger.error({ err }, '[BlockchainMonitor] Failed to start listening')
-      })
+      return blockchainMonitor.startListening()
+    }
+  }).then(() => {
+    blockchainMonitorStarted = true
+    globalThis.__truxify_workers = {
+      ...globalThis.__truxify_workers,
+      blockchainMonitor: true,
     }
   }).catch((err) => {
-    logger.error({ err }, '[BlockchainMonitor] Failed to initialize')
+    logger.error({ err }, '[BlockchainMonitor] Failed to initialize or start listening')
+    globalThis.__truxify_workers = {
+      ...globalThis.__truxify_workers,
+      blockchainMonitor: false,
+    }
   })
+
+  // Start StateDivergenceDetector after blockchain monitor warms up.
+  stateDivergenceDetector.startMonitoring()
 
   // Register worker states for health aggregation
   globalThis.__truxify_workers = {
@@ -811,7 +833,8 @@ server.listen(PORT, () => {
     devicePruningWorker: true,
     documentExpiryWorker: true,
     withdrawalSettlementWorker: true,
-    blockchainMonitor: true,
+    // blockchainMonitor flag is set async above after successful startup
+    blockchainMonitor: blockchainMonitorStarted,
   }
 })
 
@@ -846,6 +869,7 @@ async function shutdown(signal) {
   stopOutboxRelayWorker()
   stopStaleOrderWorker()
   await blockchainMonitor.stopListening()
+  stateDivergenceDetector.stopMonitoring()
   fraudDetection.destroy()
   CacheManager.shutdown()
 

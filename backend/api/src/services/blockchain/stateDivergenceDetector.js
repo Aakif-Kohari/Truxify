@@ -118,7 +118,9 @@ class StateDivergenceDetector {
       }
 
       const calls = orders.map(order => {
-        const bookingId = order.bookingId ?? order.booking_id ?? order.order_display_id ?? order.id;
+        // The real DB column for the on-chain booking ID is `escrow_booking_id`.
+        // Fall back to display ID or UUID only when no escrow booking ID is set.
+        const bookingId = order.escrow_booking_id ?? order.bookingId ?? order.booking_id ?? order.order_display_id ?? order.id;
         let numericBookingId = bookingId;
         if (typeof bookingId === 'string') {
           const match = bookingId.match(/\d+/);
@@ -141,13 +143,25 @@ class StateDivergenceDetector {
         const dbStatus = order.escrow_status || order.payment_status || order.status;
 
         if (this.isStateDiverged(dbStatus, onChain.status, onChain.paid)) {
-          const divergenceId = `div_${crypto.randomBytes(16).toString('hex')}`;
           const onChainStatusName = this.getOnChainStatusName(onChain.status);
+
+          // Deduplicate: reuse the existing divergence entry keyed by orderId.
+          // Only generate a new DB row / alert when the divergence is newly detected.
+          const existingEntry = this.divergences.get(order.id);
+          if (existingEntry && !existingEntry.resolved) {
+            // Already tracking this divergence — skip duplicate logging and alerting.
+            divergences.push(existingEntry);
+            continue;
+          }
+
+          // Use a stable, deterministic divergence ID scoped to the order so that
+          // the DB row can be updated/resolved rather than accumulating random rows.
+          const divergenceId = `div_order_${order.id}`;
 
           const divergence = {
             divergenceId,
             orderId: order.id,
-            bookingId: order.bookingId ?? order.booking_id ?? order.order_display_id ?? order.id,
+            bookingId: order.escrow_booking_id ?? order.bookingId ?? order.booking_id ?? order.order_display_id ?? order.id,
             dbState: {
               escrow_status: order.escrow_status,
               payment_status: order.payment_status,
@@ -164,13 +178,21 @@ class StateDivergenceDetector {
           };
 
           divergences.push(divergence);
-          this.divergences.set(divergenceId, {
+          this.divergences.set(order.id, {
             ...divergence,
             resolved: false,
           });
 
           await this.logOrderDivergence(divergence);
           await this.alertOrderDivergence(divergence);
+        } else {
+          // On-chain and DB are now in sync — mark any tracked divergence as resolved.
+          const existingEntry = this.divergences.get(order.id);
+          if (existingEntry && !existingEntry.resolved) {
+            existingEntry.resolved = true;
+            existingEntry.resolvedAt = new Date().toISOString();
+            this.divergences.set(order.id, existingEntry);
+          }
         }
       }
 
@@ -525,7 +547,17 @@ class StateDivergenceDetector {
   }
 
   async resolveDivergence(divergenceId, resolutionDetails) {
-    const divergence = this.divergences.get(divergenceId);
+    // Support lookup by both divergenceId (legacy) and orderId (new keying).
+    let divergence = this.divergences.get(divergenceId);
+    if (!divergence) {
+      // Search by divergenceId field in values (new entries keyed by orderId).
+      for (const entry of this.divergences.values()) {
+        if (entry.divergenceId === divergenceId) {
+          divergence = entry;
+          break;
+        }
+      }
+    }
     if (!divergence) {
       return { success: false, reason: 'divergence_not_found' };
     }
@@ -542,9 +574,9 @@ class StateDivergenceDetector {
           resolved_at: new Date().toISOString(),
           resolution_details: resolutionDetails,
         })
-        .eq('divergence_id', divergenceId);
+        .eq('divergence_id', divergence.divergenceId);
 
-      logger.info('[StateDivergenceDetector] Divergence resolved:', divergenceId);
+      logger.info('[StateDivergenceDetector] Divergence resolved:', divergence.divergenceId);
       return { success: true };
     } catch (err) {
       logger.error('[StateDivergenceDetector] Failed to resolve divergence:', err.message);
