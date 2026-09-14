@@ -52,9 +52,12 @@ class LumperEscrowService {
     }
     
     // Simulate AI parsing validation
-    const parsedAmount = claimedAmount !== undefined && claimedAmount !== null
+const parsedAmount = claimedAmount !== undefined && claimedAmount !== null
       ? Number(claimedAmount)
       : escrow.estimatedFeeAmount;
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      throw new Error('claimedAmount must be a positive number');
+    }
     
     escrow.status = 'RELEASED';
     escrow.releasedAmount = parsedAmount;
