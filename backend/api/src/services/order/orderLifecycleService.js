@@ -1077,7 +1077,7 @@ export class OrderLifecycleService {
 
   async submitRating(orderId, customerId, stars, comment, userClient) {
     return measureExecution('OrderLifecycleService.submitRating', async () => {
-      const { data: order, error: orderErr } = await this.orderRepository.findOrderById(
+      const { data: order, error: orderErr } = await this.orderRepository.findOrderByAnyId(
         orderId, 'id, order_display_id, customer_id, driver_id, status'
       );
 
