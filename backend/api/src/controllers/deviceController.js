@@ -109,15 +109,11 @@ export async function registerDeviceToken(req, res, next) {
     // All operations (upsert user_devices, rotate/retire superseded device rows,
     // clear previous owner's profile, sync current user's profile) run inside a
     // single Postgres transaction via the register_device_token RPC so a partial
-    // failure rolls everything back. Executed with the service-role client: the
-    // RPC is SECURITY DEFINER and only the service role may invoke it, and the
-    // RPC receives the server-verified req.user.id rather than trusting input.
-    // All three operations (upsert user_devices, clear previous owner's profile,
-    // sync current user's profile) run inside a single Postgres transaction via
-    // the register_device_token RPC so a partial failure rolls everything back.
-    // The RPC is EXECUTE-granted to service_role only (the migration revokes it
-    // from PUBLIC/anon/authenticated), so it must be invoked through the admin
-    // client rather than the shared anon client.
+    // failure rolls everything back. The RPC is SECURITY DEFINER and EXECUTE is
+    // granted to service_role only (the migration revokes it from PUBLIC/anon/
+    // authenticated), so it must be invoked through the admin client rather than
+    // the shared anon client. It receives the server-verified req.user.id rather
+    // than trusting client input.
     const { error: rpcError } = await supabaseAdmin.rpc('register_device_token', {
       p_user_id:      userId,
       p_fcm_token:    fcmToken,

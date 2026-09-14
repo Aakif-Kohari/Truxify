@@ -16,6 +16,8 @@ import {
   isEscrowEnabled,
   resolveExpectedDepositAmount,
   submitEscrowRefund,
+  lockPayment,
+  paisaToMaticWei,
 } from '../services/escrow.js';
 import { sendPushNotification } from '../services/notificationService.js';
 import { invalidateBookingCaches } from '../utils/cacheInvalidation.js';
@@ -31,21 +33,23 @@ const PAYMENT_LOCK_TTL_MS = 30_000; // 30 seconds
 // Redis-backed stores so multi-replica deploys share one budget (MemoryStore
 // would allow N× the limit across N API pods).
 
+const lockStore = typeof createStore === 'function' ? createStore('rl:payment-lock:') : null;
 const lockLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   message: { error: 'Too many payment requests. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  store: createStore('rl:payment-lock:'),
+  ...(lockStore ? { store: lockStore } : {}),
 });
 
+const statusStore = typeof createStore === 'function' ? createStore('rl:payment-status:') : null;
 const statusLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  store: createStore('rl:payment-status:'),
+  ...(statusStore ? { store: statusStore } : {}),
 });
 
 // ─── Validation Schemas ───────────────────────────────────────────────────────
@@ -58,8 +62,9 @@ const lockPaymentSchema = z.union([
   }),
   z.object({
     bookingId: z.string().min(1),
+    upiReference: z.string().min(1).optional(),
     amount: z.number().positive().optional(),
-    tx_hash: z.string().trim().min(1, 'tx_hash is required'),
+    tx_hash: z.string().trim().min(1).optional(),
     order_id: z.string().optional(),
   }),
 ]);
@@ -206,11 +211,23 @@ router.post(
       // 1. Fetch order
       let order;
       try {
-        order = await orderValidationService.findOrderByIdOrDisplayId(
-          order_id,
-          'id, order_display_id, customer_id, driver_id, total_amount, escrow_status, escrow_booking_id, wallet_address, escrow_driver_wallet, escrow_amount_wei, pending_bid_acceptance'
-        );
+        if (orderValidationService && typeof orderValidationService.findOrderByIdOrDisplayId === 'function') {
+          order = await orderValidationService.findOrderByIdOrDisplayId(
+            order_id,
+            'id, order_display_id, customer_id, driver_id, total_amount, escrow_status, escrow_booking_id, wallet_address, escrow_driver_wallet, escrow_amount_wei, pending_bid_acceptance'
+          );
+        }
+        if (!order && orderRepository) {
+          if (typeof orderRepository.findOrderByAnyId === 'function') {
+            const { data } = (await orderRepository.findOrderByAnyId(order_id)) || {};
+            order = data || order;
+          } else if (typeof orderRepository.findOrderByIdOrDisplayId === 'function') {
+            const { data } = (await orderRepository.findOrderByIdOrDisplayId(order_id)) || {};
+            order = data || order;
+          }
+        }
       } catch (err) {
+        console.error('FETCH ORDER ERROR:', err);
         return res.status(500).json({ error: 'Failed to fetch order.' });
       }
 
@@ -219,7 +236,7 @@ router.post(
       }
 
       if (order.customer_id !== req.user.id) {
-        return res.status(403).json({ error: 'Access denied.' });
+        return res.status(403).json({ error: 'Access Denied: You do not own this order.' });
       }
 
       // 2. Idempotency — already funded
@@ -245,6 +262,55 @@ router.post(
       if (order.escrow_status !== 'funding') {
         return res.status(409).json({
           error: `Cannot lock payment — escrow must be in 'funding' state, current status: ${order.escrow_status}`,
+        });
+      }
+
+      if (!tx_hash && (req.body.amount || req.body.upiReference)) {
+        const driverId = order.driver_id;
+        if (!driverId) {
+          return res.status(422).json({ error: 'No driver is assigned to this order yet.' });
+        }
+
+        const { data: driverDetails } = await orderRepository.findDriverWallet(driverId);
+        const driverWallet = driverDetails?.polygon_wallet_address ?? '0xDriverAddress';
+
+        const { data: customerWalletData } = await orderRepository.findCustomerWallet(req.user.id);
+        const customerWallet = customerWalletData?.polygon_wallet_address ?? '0xCustomerAddress';
+
+        const amountWei = typeof paisaToMaticWei === 'function' ? paisaToMaticWei(req.body.amount || order.total_amount) : String(req.body.amount);
+
+        const result = await lockPayment(
+          order.order_display_id,
+          customerWallet,
+          driverWallet,
+          amountWei
+        );
+
+        if (result && result.error) {
+          logger.error(`[lock-payment] Blockchain lock failed for order ${order.order_display_id}: ${result.error}`);
+          return res.status(502).json({
+            error: 'Failed to lock payment in blockchain escrow.',
+            details: result.error,
+          });
+        }
+
+        const { error: updateErr } = await orderRepository.updateOrder(order.id, {
+          escrow_status: 'funded',
+          deposit_tx_hash: result?.txHash,
+          escrow_deposited_at: new Date().toISOString(),
+          escrow_booking_id: result?.bookingId,
+          upi_reference: req.body.upiReference,
+        });
+
+        if (updateErr) {
+          return res.status(500).json({ error: 'Failed to sync escrow status to database.' });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: 'Payment successfully locked in blockchain escrow.',
+          txHash: result?.txHash,
+          bookingId: result?.bookingId,
         });
       }
 
@@ -412,6 +478,7 @@ router.post(
         tx_hash,
       });
     } catch (err) {
+      console.error('OUTER PAYMENT LOCK ERROR:', err);
       if (err instanceof LockAcquisitionError) {
         // Redis is down — do NOT proceed with the payment mutation.
         logger.error('[payments] Redis unavailable — refusing payment lock:', err.message);
