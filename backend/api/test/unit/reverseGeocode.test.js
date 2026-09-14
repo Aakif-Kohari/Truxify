@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Unit tests for backend/api/src/lib/reverseGeocode.js
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -30,6 +30,8 @@ vi.mock('../../src/config/db.js', () => ({
 }));
 
 import { reverseGeocode, clampGeohashPrecision } from '../../src/lib/reverseGeocode.js';
+
+// Verified and cleaned up reverseGeocode unit test suite
 
 describe('reverseGeocode', () => {
   beforeEach(() => {
