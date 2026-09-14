@@ -4,6 +4,13 @@ import logger from '../middleware/logger.js';
 const TOKEN_BYTE_LENGTH = 32;
 const TOKEN_EXPIRY_DAYS = 7;
 
+// Helper to validate standard UUID format
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isValidUUID(uuid) {
+  return typeof uuid === 'string' && UUID_REGEX.test(uuid);
+}
+
 export class TrackingTokenService {
   constructor({ supabase, supabaseAdmin, logger: injectedLogger }) {
     this._supabase = supabase;
@@ -26,10 +33,26 @@ export class TrackingTokenService {
     return expires.toISOString()
   }
 
+  // Method validating UUID input (for tripId/tokenId)
+  validateUUID(id, paramName = 'tripId') {
+    if (!id || !isValidUUID(id)) {
+      const error = new Error(`Invalid ${paramName} format. Must be a valid UUID.`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   async createToken({ orderDisplayId, createdBy }) {
     if (!orderDisplayId) {
+
+      this._logger.error({ orderDisplayId }, 'orderDisplayId is required to create a tracking token');
+      const err = new Error('orderDisplayId is required');
+      err.statusCode = 400;
+      throw err;
+
       this._logger.error({ orderDisplayId }, 'orderDisplayId is required to create a tracking token')
       throw new Error('orderDisplayId is required')
+
     }
 
     const rawToken = this.generateRawToken()
@@ -56,10 +79,6 @@ export class TrackingTokenService {
   }
 
   async validateToken(rawToken) {
-    // `tracking_tokens` has no anon RLS policy and anon privileges are revoked,
-    // so the service-role client is required to look up the hash — the public
-    // `/tracking` handlers must not use the anon `supabase` client
-    // (issue #13906).
     if (!this._supabaseAdmin) {
       this._logger.error('validateToken requires service-role client')
       throw new Error('Service-role client required for tracking token validation')
@@ -98,6 +117,8 @@ export class TrackingTokenService {
   }
 
   async revokeToken(tokenId) {
+    this.validateUUID(tokenId, 'tokenId');
+
     const { error } = await this._supabase
       .from('tracking_tokens')
       .update({ revoked: true, revoked_at: new Date().toISOString() })
@@ -162,8 +183,6 @@ export class TrackingTokenService {
   }
 
   async getOrderForPublicTracking(orderDisplayId) {
-    // `orders` has no anon RLS policy and anon privileges are revoked, so the
-    // service-role client is required to read it (issue #13906).
     if (!this._supabaseAdmin) {
       this._logger.error('getOrderForPublicTracking requires service-role client');
       throw new Error('Service-role client required for public tracking order');
@@ -206,10 +225,6 @@ export class TrackingTokenService {
   }
 
   async getOrderRouteCoords(orderDisplayId) {
-    // `orders` has no anon RLS policy and anon privileges are revoked
-    // (see trackingRoutes.js), so the service-role client is required to read
-    // it — the public `/route` handler must not use the anon `supabase` client
-    // (issue #13906).
     if (!this._supabaseAdmin) {
       this._logger.error('getOrderRouteCoords requires service-role client');
       throw new Error('Service-role client required for order route coordinates');
@@ -234,8 +249,6 @@ export class TrackingTokenService {
   }
 
   async getOrderTimeline(orderDisplayId) {
-    // `order_timeline` has no anon RLS policy and anon privileges are revoked,
-    // so the service-role client is required to read it (issue #13906).
     if (!this._supabaseAdmin) {
       this._logger.error('getOrderTimeline requires service-role client');
       throw new Error('Service-role client required for public tracking timeline');
@@ -274,8 +287,6 @@ export class TrackingTokenService {
       return null;
     }
 
-    // `driver_locations` has no anon RLS policy, so the service-role client is
-    // required to read the rows written by the tracker (issue #8932).
     const { data: location, error: locationError } = await this._supabaseAdmin
       .from('driver_locations')
       .select('latitude, longitude, last_updated_at')
