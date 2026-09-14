@@ -7,11 +7,11 @@
  *   - validateSetup: returns false when a contract is missing bytecode
  *   - validateSetup: returns false when a contract ABI probe fails
  *   - isMock: true when DIGILOCKER_MOCK is set; false in production guard
- *   - exchangeCode: mock token in mock mode; refusal without credentials
- *   - verifyDocuments: verified documents in mock mode
- *   - verifyAndSyncDocuments: syncs mock documents in mock mode
+ *   - exchangeCode: mock token in mock mode; live OAuth exchange; network error handling; refusal without credentials
+ *   - verifyDocuments: verified documents in mock mode; missing token; non-mock rejection; error handling
+ *   - verifyAndSyncDocuments: syncs mock documents; live document fetching and sync; network & storage error handling
  *
- * Run with:  npm test -- test/unit/digilockerService.test.js
+ * Run with:  npx vitest run test/unit/digilockerService.test.js
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -28,15 +28,17 @@ vi.mock('../../src/middleware/logger.js', () => ({
   default: mockLogger,
 }));
 
-const storageChain = vi.hoisted(() => ({
-  upload: vi.fn(),
+const mockAxios = vi.hoisted(() => ({
+  post: vi.fn(),
+  get: vi.fn(),
 }));
 
-const supabaseChain = vi.hoisted(() => ({
-  profileData: null,
-  docData: null,
-  maybeSingle: vi.fn(),
-  select: vi.fn(),
+vi.mock('axios', () => ({
+  default: mockAxios,
+}));
+
+const storageChain = vi.hoisted(() => ({
+  upload: vi.fn(),
 }));
 
 const supabaseMock = vi.hoisted(() => ({
@@ -154,12 +156,7 @@ describe('digilockerService — mock mode', () => {
     const result = await digilockerService.exchangeCode('code-123');
     expect(result.access_token).toContain('mock_digilocker_token_');
     expect(result.digilocker_id).toContain('DLID_');
-  });
-
-  it('exchangeCode refuses without credentials when not in mock mode', async () => {
-    process.env.DIGILOCKER_MOCK = 'false';
-    const result = await digilockerService.exchangeCode('code-123');
-    expect(result.success).toBe(false);
+    expect(result.name).toBe('Suresh Kumar');
   });
 
   it('verifyDocuments returns verified documents in mock mode', async () => {
@@ -225,5 +222,158 @@ describe('digilockerService — mock mode', () => {
 
     expect(result.success).toBe(true);
     expect(result.syncedDocumentsCount).toBeGreaterThan(0);
+  });
+});
+
+describe('digilockerService — live OAuth & error handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.DIGILOCKER_MOCK = 'false';
+    process.env.NODE_ENV = 'test';
+    process.env.DIGILOCKER_CLIENT_ID = 'test-client-id';
+    process.env.DIGILOCKER_CLIENT_SECRET = 'test-client-secret';
+    process.env.DIGILOCKER_REDIRECT_URI = 'https://app.truxify.com/callback';
+  });
+
+  it('exchangeCode refuses when credentials or code are missing', async () => {
+    const service = await loadService();
+    const result = await service.exchangeCode('');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('DigiLocker verification is not configured');
+  });
+
+  it('exchangeCode successfully exchanges code for token via OAuth API', async () => {
+    mockAxios.post.mockResolvedValueOnce({
+      data: {
+        access_token: 'live-access-token-xyz',
+        digilockerid: 'DLID_9999',
+        name: 'John Doe',
+      },
+    });
+
+    const service = await loadService();
+    const result = await service.exchangeCode('valid-auth-code');
+
+    expect(result.access_token).toBe('live-access-token-xyz');
+    expect(result.digilocker_id).toBe('DLID_9999');
+    expect(result.name).toBe('John Doe');
+    expect(mockAxios.post).toHaveBeenCalledWith(
+      'https://api.digitallocker.gov.in/public/oauth2/1/token',
+      expect.objectContaining({
+        code: 'valid-auth-code',
+        grant_type: 'authorization_code',
+        client_id: 'test-client-id',
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it('exchangeCode handles network/API errors gracefully', async () => {
+    mockAxios.post.mockRejectedValueOnce(new Error('Network connection timeout'));
+
+    const service = await loadService();
+    const result = await service.exchangeCode('some-auth-code');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Network connection timeout');
+    expect(mockLogger.error).toHaveBeenCalled();
+  });
+
+  it('verifyDocuments returns error when accessToken is missing', async () => {
+    const result = await digilockerService.verifyDocuments('user-1', null);
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Access token is required');
+    expect(result.is_digilocker_verified).toBe(false);
+  });
+
+  it('verifyDocuments refuses auto-approval when not in mock mode', async () => {
+    const service = await loadService();
+    const result = await service.verifyDocuments('user-1', 'some-token');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('DigiLocker verification is not configured');
+    expect(result.is_digilocker_verified).toBe(false);
+  });
+
+  it('verifyAndSyncDocuments throws error when token exchange network request fails', async () => {
+    mockAxios.post.mockRejectedValueOnce(new Error('OAuth server unreachable'));
+
+    const service = await loadService();
+    await expect(service.verifyAndSyncDocuments('driver-1', 'auth-code')).rejects.toThrow(
+      /Digilocker token exchange failed: OAuth server unreachable/
+    );
+  });
+
+  it('verifyAndSyncDocuments throws error when issued documents fetch fails', async () => {
+    mockAxios.post.mockResolvedValueOnce({
+      data: { access_token: 'valid-token', digilockerid: 'DLID_1' },
+    });
+    mockAxios.get.mockRejectedValueOnce(new Error('API rate limited'));
+
+    const service = await loadService();
+    await expect(service.verifyAndSyncDocuments('driver-1', 'auth-code')).rejects.toThrow(
+      /Failed to fetch DigiLocker documents: API rate limited/
+    );
+  });
+
+  it('verifyAndSyncDocuments successfully fetches, parses, and syncs issued documents in live mode', async () => {
+    mockAxios.post.mockResolvedValueOnce({
+      data: { access_token: 'valid-token', digilockerid: 'DLID_1' },
+    });
+    mockAxios.get
+      .mockResolvedValueOnce({
+        data: {
+          items: [
+            { doctype: 'DRVLC', uri: 'in.gov.transport-DRVLC-1234' },
+            { doctype: 'ADLNK', uri: 'in.gov.transport-ADLNK-5678' },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        data: { licenceNumber: 'DL123', holder: 'Test Driver' },
+      })
+      .mockResolvedValueOnce({
+        data: JSON.stringify({ registrationNumber: 'GJ01AB1234', owner: 'Test Driver' }),
+      });
+
+    supabaseMock.from.mockImplementation((table) => {
+      if (table === 'profiles') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { polygon_wallet_address: '0x1111111111111111111111111111111111111111' },
+                error: null,
+              }),
+            })),
+          })),
+        };
+      }
+      if (table === 'driver_documents') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              })),
+            })),
+          })),
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: { id: 'doc-sync-1' }, error: null }),
+            })),
+          })),
+        };
+      }
+      return {};
+    });
+
+    storageChain.upload.mockResolvedValue({ error: null });
+
+    const service = await loadService();
+    const result = await service.verifyAndSyncDocuments('driver-1', 'auth-code');
+
+    expect(result.success).toBe(true);
+    expect(result.syncedDocumentsCount).toBe(2);
+    expect(result.isMock).toBe(false);
   });
 });
