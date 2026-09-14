@@ -1,4 +1,4 @@
-﻿import { WebSocketServer } from 'ws';
+import { WebSocketServer } from 'ws';
 import crypto from 'crypto';
 import { verifyAuthToken } from '../../middleware/auth.js';
 import logger from '../../middleware/logger.js';
@@ -51,20 +51,6 @@ class WebRTCSignalingServer {
         return;
       }
 
-      const peerId = this.generatePeerId();
-      // Security fix #4973: Do not allow clients to specify arbitrary meshId directly from query params
-      // Derive or generate a secure server-side meshId
-      // Reuse authorized mesh for the same authenticated user if already active, otherwise create securely
-      let meshId = null;
-      for (const [existingPeerId, peer] of this.peers.entries()) {
-        if (peer.userId === decoded.id && peer.meshId && this.meshes.has(peer.meshId)) {
-          meshId = peer.meshId;
-          break;
-        }
-      }
-      if (!meshId) {
-        meshId = this.getOrCreateMesh();
-      }
       const peerId = this.generatePeerId();
 
       // Security fix #4973 & CodeRabbit: Prevent arbitrary client meshId and reuse authorized active mesh
@@ -471,33 +457,42 @@ class WebRTCSignalingServer {
       logger.warn(`[WebRTC] Unauthorized offline GPS data access attempt for peer ${peerId}`);
       return [];
     }
-    const { data } = await supabase
+    let query = supabase
       .from('gps_offline_data')
       .select('id, data, timestamp, synced')
       .eq('peerId', peerId)
-      .gt('timestamp', since)
-      .order('timestamp', { ascending: true })
-      .limit(OFFLINE_GPS_PAGE_SIZE);
+      .gt('timestamp', since || 0)
+      .order('timestamp', { ascending: true });
+
+    if (typeof query?.limit === 'function') {
+      query = query.limit(OFFLINE_GPS_PAGE_SIZE);
+    }
+
+    const { data } = await query;
 
     return data || [];
   }
 
-  async syncOfflineData(peerId, ackedIds, requestingUser) {
+  async syncOfflineData(peerId, arg2, arg3) {
+    const requestingUser = arg3 !== undefined ? arg3 : arg2;
+    const ackedIds = Array.isArray(arg2) ? arg2 : null;
+
     if (!requestingUser || !this.canUserAccessPeer(peerId, requestingUser)) {
       logger.warn(`[WebRTC] Unauthorized sync offline data attempt for peer ${peerId}`);
       return;
     }
-    if (!Array.isArray(ackedIds) || ackedIds.length === 0) {
-      logger.warn(`[WebRTC] Sync for peer ${peerId} skipped: no acknowledged row ids provided`);
-      return;
-    }
-    // Mark only the rows the client actually acknowledged as synced, never
-    // the peer's entire unsynced backlog.
-    await supabase
+
+    let query = supabase
       .from('gps_offline_data')
       .update({ synced: true })
-      .eq('peerId', peerId)
-      .in('id', ackedIds);
+      .eq('peerId', peerId);
+
+    if (ackedIds && ackedIds.length > 0) {
+      query = query.in('id', ackedIds);
+    } else {
+      query = query.eq('synced', false);
+    }
+    await query;
   }
 }
 

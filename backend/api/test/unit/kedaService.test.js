@@ -326,6 +326,10 @@ describe('KEDAService.waitForScaledObjectStatus', () => {
       error: 'Timed out waiting for KEDA scaled object status',
     })
     expect(axios.get).toHaveBeenCalledTimes(3)
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ namespace, scaledObjectName, timeoutMs: 250 }),
+      'Timed out waiting for KEDA scaled object status',
+    )
   })
 
   it('continues polling after a transient request failure', async () => {

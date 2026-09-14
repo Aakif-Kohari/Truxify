@@ -4,7 +4,7 @@ import { BidAcceptanceService, DomainError } from '../services/order/bidAcceptan
 import { OrderTimelineService } from '../services/order/orderTimelineService.js';
 import { OrderLifecycleService } from '../services/order/orderLifecycleService.js';
 import { OrderValidationService } from '../services/order/orderValidationService.js';
-import { buildDepositTx, recordDepositTx, escrowRefund } from '../services/escrow.js';
+import { buildDepositTx, recordDepositTx, submitEscrowRefund } from '../services/escrow.js';
 import { predictDemand } from '../services/ml.js';
 import { buildStraightLineGeometry, getRouteGeometry } from '../services/osrm.js';
 import logger from '../middleware/logger.js';
@@ -17,7 +17,7 @@ const bidAcceptanceService = new BidAcceptanceService({
   orderRepository,
   buildDepositTxFn: buildDepositTx,
   recordDepositTxFn: recordDepositTx,
-  escrowRefundFn: escrowRefund,
+  escrowRefundFn: submitEscrowRefund,
   logger,
 });
 
