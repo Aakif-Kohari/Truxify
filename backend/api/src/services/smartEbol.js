@@ -10,7 +10,9 @@ function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
         typeof lat1 !== 'number' || typeof lon1 !== 'number' ||
         typeof lat2 !== 'number' || typeof lon2 !== 'number' ||
         !Number.isFinite(lat1) || !Number.isFinite(lon1) ||
-        !Number.isFinite(lat2) || !Number.isFinite(lon2)
+        !Number.isFinite(lat2) || !Number.isFinite(lon2) ||
+        lat1 < -90 || lat1 > 90 || lat2 < -90 || lat2 > 90 ||
+        lon1 < -180 || lon1 > 180 || lon2 < -180 || lon2 > 180
     ) {
         return NaN;
     }
