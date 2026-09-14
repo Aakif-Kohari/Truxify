@@ -1,4 +1,6 @@
 import axios from 'axios';
+import fs from 'fs';
+import https from 'https';
 import logger from '../middleware/logger.js';
 
 class KEDAService {
@@ -8,8 +10,9 @@ class KEDAService {
         this.kafkaLagMetric = process.env.KAFKA_LAG_METRIC || 'kafka_consumergroup_lag';
         this.kafkaTopicLabel = process.env.KAFKA_TOPIC_LABEL || 'topic';
         this.kafkaConsumerGroupLabel = process.env.KAFKA_CONSUMER_GROUP_LABEL || 'consumergroup';
-        this.kedaApiUrl = process.env.KEDA_API_URL || 'http://kubernetes.default.svc';
+        this.kedaApiUrl = process.env.KEDA_API_URL || 'https://kubernetes.default.svc';
         this.kedaApiToken = process.env.KEDA_API_TOKEN || '';
+        this.kedaCaCertPath = process.env.KEDA_CA_CERT_PATH || '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
         this.kedaRequestTimeout = Number(process.env.KEDA_REQUEST_TIMEOUT_MS) || 5000;
         this.kedaPollInterval = Number(process.env.KEDA_POLL_INTERVAL_MS) || 1000;
         this.kedaPollTimeout = Number(process.env.KEDA_POLL_TIMEOUT_MS) || 10000;
@@ -30,14 +33,38 @@ class KEDAService {
         return sanitized || fallback;
     }
 
+    /**
+     * Build the authenticated HTTPS request options for the Kubernetes API.
+     *
+     * @returns {object} Axios request configuration
+     * @throws {Error} when a bearer token would be sent over HTTP
+     */
     _kedaRequestConfig() {
+        const kedaUrl = new URL(this.kedaApiUrl);
+        if (this.kedaApiToken && kedaUrl.protocol !== 'https:') {
+            throw new Error('KEDA_API_URL must use HTTPS when KEDA_API_TOKEN is configured.');
+        }
+
         const config = { timeout: this.kedaRequestTimeout };
         if (this.kedaApiToken) {
             config.headers = { Authorization: `Bearer ${this.kedaApiToken}` };
         }
+        if (kedaUrl.protocol === 'https:' && fs.existsSync(this.kedaCaCertPath)) {
+            config.httpsAgent = new https.Agent({
+                ca: fs.readFileSync(this.kedaCaCertPath),
+                rejectUnauthorized: true,
+            });
+        }
         return config;
     }
 
+    /**
+     * Fetch the status of one KEDA ScaledObject from the Kubernetes API.
+     *
+     * @param {string} namespace Kubernetes namespace containing the object
+     * @param {string} scaledObjectName KEDA ScaledObject resource name
+     * @returns {Promise<object>} normalized status or failure result
+     */
     async getScaledObjectStatus(namespace, scaledObjectName) {
         const timestamp = () => new Date().toISOString();
 
@@ -54,7 +81,7 @@ class KEDAService {
         try {
             const response = await axios.get(url, this._kedaRequestConfig());
 
-            if (response.status < 200 || response.status >= 300) {
+            if (response.status !== 200) {
                 logger.error(
                     { event: 'KEDA_SCALED_OBJECT_STATUS_ERROR', statusCode: response.status },
                     'KEDA scaled object status request failed',
@@ -81,11 +108,21 @@ class KEDAService {
             return {
                 success: false,
                 error: error?.message ?? String(error),
+                ...(error?.response?.status ? { statusCode: error.response.status } : {}),
                 timestamp: timestamp(),
             };
         }
     }
 
+    /**
+     * Poll a KEDA ScaledObject until a predicate succeeds or the timeout ends.
+     *
+     * @param {string} namespace Kubernetes namespace containing the object
+     * @param {string} scaledObjectName KEDA ScaledObject resource name
+     * @param {Function} predicate predicate evaluated against each returned status
+     * @param {object} options polling interval and timeout in milliseconds
+     * @returns {Promise<object>} successful status or timed-out failure result
+     */
     async waitForScaledObjectStatus(namespace, scaledObjectName, predicate, options = {}) {
         const check = typeof predicate === 'function' ? predicate : () => true;
         const interval = Number(options.intervalMs) || this.kedaPollInterval;
