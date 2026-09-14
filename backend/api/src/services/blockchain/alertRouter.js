@@ -87,8 +87,11 @@ class AlertRouter {
     const typeEmoji = this.getTypeEmoji(alert.type);
 
     let text = `${typeEmoji} *${alert.type}* (${alert.severity})`;
+    if (alert.bookingId) text += `\n*Booking ID:* ${alert.bookingId}`;
     if (alert.reason) text += `\n*Reason:* ${alert.reason}`;
     if (alert.driver) text += `\n*Driver:* ${alert.driver}`;
+    if (alert.customer) text += `\n*Customer:* ${alert.customer}`;
+    if (alert.amount) text += `\n*Amount:* ${alert.amount}`;
     if (alert.wallet) text += `\n*Wallet:* ${alert.wallet}`;
     if (alert.txHash) text += `\n*TX:* \`${alert.txHash}\``;
 
@@ -128,8 +131,11 @@ class AlertRouter {
       `Details:`,
     ];
 
+    if (alert.bookingId) lines.push(`  Booking ID: ${alert.bookingId}`);
     if (alert.reason) lines.push(`  Reason: ${alert.reason}`);
     if (alert.driver) lines.push(`  Driver: ${alert.driver}`);
+    if (alert.customer) lines.push(`  Customer: ${alert.customer}`);
+    if (alert.amount) lines.push(`  Amount: ${alert.amount}`);
     if (alert.wallet) lines.push(`  Wallet: ${alert.wallet}`);
     if (alert.shipmentId) lines.push(`  Shipment ID: ${alert.shipmentId}`);
     if (alert.claimId) lines.push(`  Claim ID: ${alert.claimId}`);
@@ -145,7 +151,7 @@ class AlertRouter {
       return null;
     }
 
-    const message = `[${alert.severity}] ${alert.type}: ${alert.reason || 'Check dashboard for details'}`;
+    const message = `[${alert.severity}] ${alert.type}: ${alert.reason || alert.message || 'Check dashboard for details'}`;
     const phoneNumbers = (process.env.ALERT_SMS_RECIPIENTS || '').split(',').filter(p => p.trim());
 
     for (const phone of phoneNumbers) {
@@ -175,6 +181,13 @@ class AlertRouter {
   getTypeEmoji(type) {
     const emojis = {
       PAYMENT_RECEIVED: '💰',
+      PAYMENT_RELEASED: '💸',
+      BOOKING_CANCELLED: '🚫',
+      BOOKING_STARTED: '🚚',
+      BOOKING_DISPUTED: '⚠️',
+      DISPUTE_RESOLVED: '⚖️',
+      BOOKING_CREATED: '📦',
+      BLOCKCHAIN_STATE_DIVERGENCE: '⚡',
       INSURANCE_CLAIM_APPROVED: '✅',
       INSURANCE_CLAIM_REJECTED: '❌',
       GEOFENCE_BREACH: '[WARNING]',

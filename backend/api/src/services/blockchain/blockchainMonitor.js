@@ -1,17 +1,22 @@
 import { ethers } from 'ethers';
 import logger from '../../middleware/logger.js';
 import * as Sentry from '@sentry/node';
-import { supabase, supabaseAdmin } from '../../config/db.js';
+import { supabase, supabaseAdmin, redisClient } from '../../config/db.js';
 import { measureExecution } from '../../core/performanceMetrics.js';
 
-const PAYMENT_RECEIVED_EVENT = 'PaymentReceived(address indexed driver, uint256 amount, uint256 timestamp)';
-const INSURANCE_CLAIM_APPROVED_EVENT = 'InsuranceClaimApproved(uint256 indexed claimId, uint256 amount)';
-const INSURANCE_CLAIM_REJECTED_EVENT = 'InsuranceClaimRejected(uint256 indexed claimId, string reason)';
-const GEOFENCE_BREACH_EVENT = 'GeofenceBreach(uint256 indexed shipmentId, address driver)';
-const BALANCE_UPDATE_FAILED_EVENT = 'BalanceUpdateFailed(address indexed wallet, string reason)';
-const SMART_CONTRACT_REVERT_EVENT = 'SmartContractRevert(bytes indexed txHash, string reason)';
-
 const ESCROW_ABI = [
+  'event BookingCreated(uint256 indexed bookingId, address indexed customer, address indexed driver, uint256 amount)',
+  'event PaymentReleased(uint256 indexed bookingId, address indexed driver, uint256 amount)',
+  'event BookingCancelled(uint256 indexed bookingId, address indexed customer, uint256 refundAmount)',
+  'event BookingStarted(uint256 indexed bookingId, address indexed driver, uint256 amount)',
+  'event CancellationPenaltyApplied(uint256 indexed bookingId, address indexed driver, uint256 driverAmount, address customer, uint256 refundAmount)',
+  'event BookingDisputed(uint256 indexed bookingId, address indexed raisedBy)',
+  'event DisputeResolved(uint256 indexed bookingId, address indexed driver, uint256 driverAmount, address indexed customer, uint256 refundAmount)',
+  'event WithdrawalReady(uint256 indexed bookingId, address indexed recipient, uint256 amount)',
+  'event Withdrawn(address indexed recipient, uint256 amount)',
+  'event EmergencyRecovered(address indexed recipient, uint256 amount)',
+  'event RelayerUpdated(address indexed newRelayer)',
+  // Legacy / simulated events for backward compatibility
   'event PaymentReceived(address indexed driver, uint256 amount, uint256 timestamp)',
   'event InsuranceClaimApproved(uint256 indexed claimId, uint256 amount)',
   'event InsuranceClaimRejected(uint256 indexed claimId, string reason)',
@@ -22,37 +27,90 @@ const ESCROW_ABI = [
 
 class BlockchainMonitor {
   constructor(deps = {}) {
-    this.rpcUrl = process.env.POLYGON_RPC_URL;
-    this.contractAddress = process.env.ESCROW_CONTRACT_ADDRESS;
+    this.rpcUrl = deps.rpcUrl || process.env.POLYGON_RPC_URL;
+    this.contractAddress = deps.contractAddress || process.env.ESCROW_CONTRACT_ADDRESS;
     this.alertRouter = deps.alertRouter;
     this.metricsService = deps.metricsService;
     this.escalationHandler = deps.escalationHandler;
-    this.provider = null;
-    this.contract = null;
+    this.checkpointStore = deps.checkpointStore || null;
+    this.provider = deps.provider || null;
+    this.contract = deps.contract || null;
     this.isListening = false;
     this.isScanning = false;
     this.lastBlockScanned = 0;
+    this.lastBlockHash = null;
+    this.lastSuccessfulScan = null;
+    this.lastError = null;
+    this.pollTimer = null;
+    this.processedEventKeys = new Set();
     this.eventHandlers = {};
+    this.startBlock = deps.startBlock !== undefined
+      ? deps.startBlock
+      : (process.env.BLOCKCHAIN_START_BLOCK ? parseInt(process.env.BLOCKCHAIN_START_BLOCK, 10) : null);
+    this.reorgRewindBlocks = deps.reorgRewindBlocks !== undefined
+      ? deps.reorgRewindBlocks
+      : parseInt(process.env.BLOCKCHAIN_REORG_REWIND_BLOCKS || '12', 10);
   }
 
   async initialize() {
     return measureExecution('BlockchainMonitor.initialize', async () => {
+      this.rpcUrl = this.rpcUrl || process.env.POLYGON_RPC_URL;
+      this.contractAddress = this.contractAddress || process.env.ESCROW_CONTRACT_ADDRESS;
+
       if (!this.rpcUrl || !this.contractAddress) {
         logger.warn('[BlockchainMonitor] RPC URL or contract address not configured. Monitoring disabled.');
         return false;
       }
 
       try {
-        this.provider = new ethers.JsonRpcProvider(this.rpcUrl);
-        this.contract = new ethers.Contract(this.contractAddress, ESCROW_ABI, this.provider);
+        if (!this.provider) {
+          this.provider = new ethers.JsonRpcProvider(this.rpcUrl);
+        }
+        if (!this.contract) {
+          this.contract = new ethers.Contract(this.contractAddress, ESCROW_ABI, this.provider);
+        }
 
-        const blockNumber = await this.provider.getBlockNumber();
-        this.lastBlockScanned = blockNumber;
+        const currentBlock = await this.provider.getBlockNumber();
+        const checkpoint = await this.loadCheckpoint();
 
-        logger.info(`[BlockchainMonitor] Initialized. Current block: ${blockNumber}`);
+        let startFromBlock = null;
+
+        if (checkpoint && checkpoint.blockNumber !== undefined && checkpoint.blockNumber !== null) {
+          logger.info(`[BlockchainMonitor] Resuming from checkpoint block: ${checkpoint.blockNumber}`);
+
+          // Reorg safety: verify block hash at checkpoint if chain is past that block
+          if (checkpoint.blockHash && checkpoint.blockNumber <= currentBlock && typeof this.provider.getBlock === 'function') {
+            try {
+              const chainBlock = await this.provider.getBlock(checkpoint.blockNumber);
+              if (chainBlock && chainBlock.hash && chainBlock.hash.toLowerCase() !== checkpoint.blockHash.toLowerCase()) {
+                const rewindTo = Math.max(0, checkpoint.blockNumber - this.reorgRewindBlocks);
+                logger.warn(
+                  `[BlockchainMonitor] Reorg detected at block ${checkpoint.blockNumber}! Checkpoint hash ${checkpoint.blockHash} !== chain hash ${chainBlock.hash}. Rewinding ${this.reorgRewindBlocks} blocks to ${rewindTo}.`
+                );
+                startFromBlock = rewindTo;
+              } else {
+                startFromBlock = checkpoint.blockNumber;
+              }
+            } catch (err) {
+              logger.warn(`[BlockchainMonitor] Error verifying block hash at checkpoint: ${err.message}`);
+              startFromBlock = checkpoint.blockNumber;
+            }
+          } else {
+            startFromBlock = checkpoint.blockNumber;
+          }
+        } else if (this.startBlock !== null && this.startBlock !== undefined) {
+          logger.info(`[BlockchainMonitor] Using configured start block: ${this.startBlock}`);
+          startFromBlock = this.startBlock;
+        } else {
+          startFromBlock = currentBlock;
+        }
+
+        this.lastBlockScanned = startFromBlock;
+        logger.info(`[BlockchainMonitor] Initialized. Current block: ${currentBlock}, initial scan block: ${startFromBlock}`);
         return true;
       } catch (err) {
         logger.error('[BlockchainMonitor] Initialization failed:', err.message);
+        this.lastError = err.message;
         Sentry.captureException(err);
         return false;
       }
@@ -73,12 +131,29 @@ class BlockchainMonitor {
 
       try {
         this.setupEventHandlers();
+
+        // Historical backfill: scan from lastBlockScanned up to current chain head
+        if (this.provider && typeof this.provider.getBlockNumber === 'function') {
+          const currentBlock = await this.provider.getBlockNumber();
+          if (currentBlock > this.lastBlockScanned) {
+            logger.info(`[BlockchainMonitor] Performing historical backfill from block ${this.lastBlockScanned + 1} to ${currentBlock}...`);
+            await this.scanBlockRange(this.lastBlockScanned + 1, currentBlock);
+            let blockHash = null;
+            if (typeof this.provider.getBlock === 'function') {
+              const block = await this.provider.getBlock(currentBlock).catch(() => null);
+              blockHash = block?.hash || null;
+            }
+            await this.saveCheckpoint(currentBlock, blockHash);
+          }
+        }
+
         this.isListening = true;
         logger.info('[BlockchainMonitor] Started listening for blockchain events.');
 
         this.startPollingBlocks();
       } catch (err) {
         logger.error('[BlockchainMonitor] Failed to start listening:', err.message);
+        this.lastError = err.message;
         Sentry.captureException(err);
       }
     });
@@ -86,19 +161,31 @@ class BlockchainMonitor {
 
   setupEventHandlers() {
     this.eventHandlers = {
-      'PaymentReceived': this.handlePaymentReceived.bind(this),
-      'InsuranceClaimApproved': this.handleInsuranceClaimApproved.bind(this),
-      'InsuranceClaimRejected': this.handleInsuranceClaimRejected.bind(this),
-      'GeofenceBreach': this.handleGeofenceBreach.bind(this),
-      'BalanceUpdateFailed': this.handleBalanceUpdateFailed.bind(this),
-      'SmartContractRevert': this.handleSmartContractRevert.bind(this),
+      // Real TruxifyEscrow events
+      PaymentReleased: this.handlePaymentReleased.bind(this),
+      BookingCancelled: this.handleBookingCancelled.bind(this),
+      BookingStarted: this.handleBookingStarted.bind(this),
+      BookingDisputed: this.handleBookingDisputed.bind(this),
+      DisputeResolved: this.handleDisputeResolved.bind(this),
+      BookingCreated: this.handleBookingCreated.bind(this),
+      // Legacy / simulated events
+      PaymentReceived: this.handlePaymentReceived.bind(this),
+      InsuranceClaimApproved: this.handleInsuranceClaimApproved.bind(this),
+      InsuranceClaimRejected: this.handleInsuranceClaimRejected.bind(this),
+      GeofenceBreach: this.handleGeofenceBreach.bind(this),
+      BalanceUpdateFailed: this.handleBalanceUpdateFailed.bind(this),
+      SmartContractRevert: this.handleSmartContractRevert.bind(this),
     };
   }
 
   startPollingBlocks() {
+    if (this.pollTimer) {
+      return;
+    }
+
     const pollInterval = parseInt(process.env.BLOCKCHAIN_POLL_INTERVAL_MS || '12000', 10);
 
-    setInterval(async () => {
+    this.pollTimer = setInterval(async () => {
       if (this.isScanning) {
         logger.warn('[BlockchainMonitor] Previous block scan still in progress. Skipping interval tick to avoid duplicate event processing.');
         return;
@@ -111,10 +198,16 @@ class BlockchainMonitor {
         const currentBlock = await this.provider.getBlockNumber();
         if (currentBlock > this.lastBlockScanned) {
           await this.scanBlockRange(this.lastBlockScanned + 1, currentBlock);
-          this.lastBlockScanned = currentBlock;
+          let blockHash = null;
+          if (typeof this.provider.getBlock === 'function') {
+            const block = await this.provider.getBlock(currentBlock).catch(() => null);
+            blockHash = block?.hash || null;
+          }
+          await this.saveCheckpoint(currentBlock, blockHash);
         }
       } catch (err) {
         logger.error('[BlockchainMonitor] Polling error:', err.message);
+        this.lastError = err.message;
         Sentry.captureException(err);
       } finally {
         this.isScanning = false;
@@ -124,24 +217,69 @@ class BlockchainMonitor {
 
   async scanBlockRange(fromBlock, toBlock) {
     return measureExecution('BlockchainMonitor.scanBlockRange', async () => {
-      try {
-        const logs = await this.provider.getLogs({
-          address: this.contractAddress,
-          fromBlock,
-          toBlock,
-        });
+      if (fromBlock > toBlock) return;
+      if (typeof this.provider?.getLogs !== 'function') {
+        logger.warn('[BlockchainMonitor] provider.getLogs not available. Skipping log scan.');
+        return;
+      }
 
-        for (const log of logs) {
-          await this.processLog(log);
+      try {
+        const CHUNK_SIZE = 500;
+        for (let start = fromBlock; start <= toBlock; start += CHUNK_SIZE) {
+          const end = Math.min(start + CHUNK_SIZE - 1, toBlock);
+          const logs = await this.provider.getLogs({
+            address: this.contractAddress,
+            fromBlock: start,
+            toBlock: end,
+          });
+
+          for (const log of logs) {
+            await this.processLog(log);
+          }
         }
 
         this.metricsService?.recordBlockScan(toBlock - fromBlock + 1);
+        this.lastSuccessfulScan = new Date().toISOString();
       } catch (err) {
         logger.error(`[BlockchainMonitor] Error scanning blocks ${fromBlock}-${toBlock}:`, err.message);
         this.metricsService?.recordBlockScanError();
+        this.lastError = err.message;
         Sentry.captureException(err);
       }
     });
+  }
+
+  async isEventProcessed(eventKey, txHash, logIndex) {
+    if (this.processedEventKeys.has(eventKey)) {
+      return true;
+    }
+
+    if (this.checkpointStore?.isEventProcessed) {
+      const exists = await this.checkpointStore.isEventProcessed(txHash, logIndex);
+      if (exists) {
+        this.processedEventKeys.add(eventKey);
+        return true;
+      }
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (client?.from && txHash) {
+      try {
+        const { data, error } = await client
+          .from('blockchain_monitoring_events')
+          .select('id')
+          .eq('data->>txHash', txHash)
+          .eq('data->>logIndex', String(logIndex))
+          .limit(1);
+
+        if (!error && data && data.length > 0) {
+          this.processedEventKeys.add(eventKey);
+          return true;
+        }
+      } catch (_) {}
+    }
+
+    return false;
   }
 
   async processLog(log) {
@@ -151,6 +289,15 @@ class BlockchainMonitor {
 
       if (!parsed) return;
 
+      const txHash = log.transactionHash;
+      const logIndex = log.index !== undefined ? log.index : (log.logIndex ?? 0);
+      const eventKey = `${txHash}:${logIndex}`;
+
+      if (await this.isEventProcessed(eventKey, txHash, logIndex)) {
+        logger.debug(`[BlockchainMonitor] Event ${eventKey} already processed. Skipping duplicate.`);
+        return;
+      }
+
       const handler = this.eventHandlers[parsed.name];
       if (handler) {
         await handler(parsed.args, log);
@@ -159,6 +306,134 @@ class BlockchainMonitor {
       logger.error('[BlockchainMonitor] Log parsing error:', err.message);
     }
   }
+
+  // ── Real Escrow Handlers ──────────────────────────────────────────────────
+
+  async handlePaymentReleased(args, log) {
+    const [bookingId, driver, amount] = args;
+    const alert = {
+      type: 'PAYMENT_RELEASED',
+      severity: 'LOW',
+      bookingId: bookingId.toString(),
+      driver,
+      amount: amount.toString(),
+      txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
+      blockNumber: log.blockNumber,
+      blockHash: log.blockHash,
+      timestamp: new Date().toISOString(),
+    };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
+
+    await this.storeEvent(alert, log);
+    await this.alertRouter?.route(alert);
+    this.metricsService?.recordPaymentEvent?.('success');
+  }
+
+  async handleBookingCancelled(args, log) {
+    const [bookingId, customer, refundAmount] = args;
+    const alert = {
+      type: 'BOOKING_CANCELLED',
+      severity: 'MEDIUM',
+      bookingId: bookingId.toString(),
+      customer,
+      refundAmount: refundAmount.toString(),
+      txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
+      blockNumber: log.blockNumber,
+      blockHash: log.blockHash,
+      timestamp: new Date().toISOString(),
+    };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
+
+    await this.storeEvent(alert, log);
+    await this.alertRouter?.route(alert);
+  }
+
+  async handleBookingStarted(args, log) {
+    const [bookingId, driver, amount] = args;
+    const alert = {
+      type: 'BOOKING_STARTED',
+      severity: 'LOW',
+      bookingId: bookingId.toString(),
+      driver,
+      amount: amount.toString(),
+      txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
+      blockNumber: log.blockNumber,
+      blockHash: log.blockHash,
+      timestamp: new Date().toISOString(),
+    };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
+
+    await this.storeEvent(alert, log);
+    await this.alertRouter?.route(alert);
+  }
+
+  async handleBookingDisputed(args, log) {
+    const [bookingId, raisedBy] = args;
+    const alert = {
+      type: 'BOOKING_DISPUTED',
+      severity: 'HIGH',
+      bookingId: bookingId.toString(),
+      raisedBy,
+      txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
+      blockNumber: log.blockNumber,
+      blockHash: log.blockHash,
+      timestamp: new Date().toISOString(),
+    };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
+
+    await this.storeEvent(alert, log);
+    await this.alertRouter?.route(alert);
+    await this.escalationHandler?.escalate(alert);
+  }
+
+  async handleDisputeResolved(args, log) {
+    const [bookingId, driver, driverAmount, customer, refundAmount] = args;
+    const alert = {
+      type: 'DISPUTE_RESOLVED',
+      severity: 'MEDIUM',
+      bookingId: bookingId.toString(),
+      driver,
+      driverAmount: driverAmount.toString(),
+      customer,
+      refundAmount: refundAmount.toString(),
+      txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
+      blockNumber: log.blockNumber,
+      blockHash: log.blockHash,
+      timestamp: new Date().toISOString(),
+    };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
+
+    await this.storeEvent(alert, log);
+    await this.alertRouter?.route(alert);
+  }
+
+  async handleBookingCreated(args, log) {
+    const [bookingId, customer, driver, amount] = args;
+    const alert = {
+      type: 'BOOKING_CREATED',
+      severity: 'LOW',
+      bookingId: bookingId.toString(),
+      customer,
+      driver,
+      amount: amount.toString(),
+      txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
+      blockNumber: log.blockNumber,
+      blockHash: log.blockHash,
+      timestamp: new Date().toISOString(),
+    };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
+
+    await this.storeEvent(alert, log);
+    await this.alertRouter?.route(alert);
+  }
+
+  // ── Legacy / Simulated Handlers ──────────────────────────────────────────
 
   async handlePaymentReceived(args, log) {
     const [driver, amount, timestamp] = args;
@@ -170,12 +445,14 @@ class BlockchainMonitor {
       amount: amount.toString(),
       timestamp: parseInt(timestamp),
       txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
       blockNumber: log.blockNumber,
     };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
 
-    await this.storeEvent(alert);
+    await this.storeEvent(alert, log);
     await this.alertRouter?.route(alert);
-    this.metricsService?.recordPaymentEvent('success');
+    this.metricsService?.recordPaymentEvent?.('success');
   }
 
   async handleInsuranceClaimApproved(args, log) {
@@ -187,12 +464,14 @@ class BlockchainMonitor {
       claimId: claimId.toString(),
       amount: amount.toString(),
       txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
       blockNumber: log.blockNumber,
     };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
 
-    await this.storeEvent(alert);
+    await this.storeEvent(alert, log);
     await this.alertRouter?.route(alert);
-    this.metricsService?.recordInsuranceEvent('approved');
+    this.metricsService?.recordInsuranceEvent?.('approved');
   }
 
   async handleInsuranceClaimRejected(args, log) {
@@ -204,12 +483,14 @@ class BlockchainMonitor {
       claimId: claimId.toString(),
       reason,
       txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
       blockNumber: log.blockNumber,
     };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
 
-    await this.storeEvent(alert);
+    await this.storeEvent(alert, log);
     await this.alertRouter?.route(alert);
-    this.metricsService?.recordInsuranceEvent('rejected');
+    this.metricsService?.recordInsuranceEvent?.('rejected');
 
     if (alert.severity === 'HIGH' || alert.severity === 'CRITICAL') {
       await this.escalationHandler?.escalate(alert);
@@ -225,12 +506,14 @@ class BlockchainMonitor {
       shipmentId: shipmentId.toString(),
       driver,
       txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
       blockNumber: log.blockNumber,
     };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
 
-    await this.storeEvent(alert);
+    await this.storeEvent(alert, log);
     await this.alertRouter?.route(alert);
-    this.metricsService?.recordGeofenceBreach();
+    this.metricsService?.recordGeofenceBreach?.();
     await this.escalationHandler?.escalate(alert);
   }
 
@@ -243,13 +526,15 @@ class BlockchainMonitor {
       wallet,
       reason,
       txHash: log.transactionHash,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
       blockNumber: log.blockNumber,
       timestamp: new Date().toISOString(),
     };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
 
-    await this.storeEvent(alert);
+    await this.storeEvent(alert, log);
     await this.alertRouter?.route(alert);
-    this.metricsService?.recordBalanceUpdateFailure();
+    this.metricsService?.recordBalanceUpdateFailure?.();
     await this.escalationHandler?.escalate(alert);
   }
 
@@ -259,35 +544,157 @@ class BlockchainMonitor {
     const alert = {
       type: 'SMART_CONTRACT_REVERT',
       severity: 'CRITICAL',
-      txHash: '0x' + txHash.slice(2).padEnd(64, '0'),
+      txHash: '0x' + (txHash ? txHash.slice(2).padEnd(64, '0') : ''.padEnd(64, '0')),
       reason,
+      logIndex: log.index !== undefined ? log.index : (log.logIndex ?? 0),
       blockNumber: log.blockNumber,
       timestamp: new Date().toISOString(),
     };
+    alert.eventKey = `${alert.txHash}:${alert.logIndex}`;
 
-    await this.storeEvent(alert);
+    await this.storeEvent(alert, log);
     await this.alertRouter?.route(alert);
-    this.metricsService?.recordContractRevert();
+    this.metricsService?.recordContractRevert?.();
     await this.escalationHandler?.escalate(alert);
   }
 
-  async storeEvent(alert) {
+  // ── Event & Checkpoint Persistence ───────────────────────────────────────
+
+  async storeEvent(alert, log) {
+    const eventKey = alert.eventKey || `${alert.txHash}:${alert.logIndex ?? 0}`;
+    this.processedEventKeys.add(eventKey);
+
+    if (this.checkpointStore?.storeEvent) {
+      await this.checkpointStore.storeEvent(alert);
+      return;
+    }
+
     try {
-      await (supabaseAdmin || supabase)
-        .from('blockchain_monitoring_events')
-        .insert([{
-          type: alert.type,
-          severity: alert.severity,
-          data: alert,
-          created_at: new Date().toISOString(),
-        }]);
+      const client = supabaseAdmin || supabase;
+      if (client?.from) {
+        await client
+          .from('blockchain_monitoring_events')
+          .insert([{
+            type: alert.type,
+            severity: alert.severity,
+            data: alert,
+            created_at: new Date().toISOString(),
+          }]);
+      }
     } catch (err) {
       logger.error('[BlockchainMonitor] Failed to store event:', err.message);
     }
   }
 
+  async saveCheckpoint(blockNumber, blockHash) {
+    this.lastBlockScanned = blockNumber;
+    this.lastBlockHash = blockHash;
+    this.lastSuccessfulScan = new Date().toISOString();
+
+    if (this.checkpointStore?.saveCheckpoint) {
+      await this.checkpointStore.saveCheckpoint(blockNumber, blockHash);
+      return;
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (client?.from) {
+      try {
+        await client
+          .from('blockchain_monitoring_events')
+          .insert([{
+            type: 'SCAN_CHECKPOINT',
+            severity: 'LOW',
+            data: { blockNumber, blockHash, updatedAt: new Date().toISOString() },
+            created_at: new Date().toISOString(),
+          }]);
+      } catch (err) {
+        logger.warn('[BlockchainMonitor] Failed to persist checkpoint to DB:', err.message);
+      }
+    }
+
+    if (redisClient?.set) {
+      try {
+        await redisClient.set('truxify:blockchain:scan_checkpoint', JSON.stringify({ blockNumber, blockHash }));
+      } catch (_) {}
+    }
+  }
+
+  async loadCheckpoint() {
+    if (this.checkpointStore?.loadCheckpoint) {
+      return await this.checkpointStore.loadCheckpoint();
+    }
+
+    const client = supabaseAdmin || supabase;
+    if (client?.from) {
+      try {
+        const { data, error } = await client
+          .from('blockchain_monitoring_events')
+          .select('data')
+          .eq('type', 'SCAN_CHECKPOINT')
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (!error && data && data.length > 0 && data[0]?.data?.blockNumber !== undefined) {
+          return {
+            blockNumber: Number(data[0].data.blockNumber),
+            blockHash: data[0].data.blockHash,
+          };
+        }
+      } catch (err) {
+        logger.warn('[BlockchainMonitor] Failed to load checkpoint from DB:', err.message);
+      }
+    }
+
+    if (redisClient?.get) {
+      try {
+        const val = await redisClient.get('truxify:blockchain:scan_checkpoint');
+        if (val) {
+          const parsed = JSON.parse(val);
+          if (parsed.blockNumber !== undefined) {
+            return {
+              blockNumber: Number(parsed.blockNumber),
+              blockHash: parsed.blockHash,
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
+    return null;
+  }
+
+  async getHealth() {
+    let currentChainHead = null;
+    let blockLag = null;
+
+    if (this.provider && typeof this.provider.getBlockNumber === 'function') {
+      try {
+        currentChainHead = await this.provider.getBlockNumber();
+        if (this.lastBlockScanned !== null && this.lastBlockScanned !== undefined) {
+          blockLag = Math.max(0, currentChainHead - this.lastBlockScanned);
+        }
+      } catch (err) {
+        this.lastError = err.message;
+      }
+    }
+
+    return {
+      status: this.isListening ? 'running' : 'stopped',
+      running: this.isListening,
+      lastScannedBlock: this.lastBlockScanned,
+      currentChainHead,
+      blockLag,
+      lastSuccessfulScan: this.lastSuccessfulScan || null,
+      lastError: this.lastError || null,
+    };
+  }
+
   async stopListening() {
     this.isListening = false;
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
     logger.info('[BlockchainMonitor] Stopped listening for blockchain events.');
   }
 }

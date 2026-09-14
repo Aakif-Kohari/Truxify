@@ -169,6 +169,8 @@ import { startStaleOrderWorker, stopStaleOrderWorker } from './workers/staleOrde
 import { startDevicePruningWorker, stopDevicePruningWorker } from './workers/devicePruningWorker.js'
 import BlockchainMetrics from './services/blockchain/blockchainMetrics.js'
 import EscalationHandler from './services/blockchain/escalationHandler.js'
+import AlertRouter from './services/blockchain/alertRouter.js'
+import BlockchainMonitor from './services/blockchain/blockchainMonitor.js'
 import {
   startWithdrawalSettlementWorker,
   stopWithdrawalSettlementWorker
@@ -202,6 +204,12 @@ CacheManager.init(redisClient)
 // ============================================================================
 const blockchainMetrics = new BlockchainMetrics()
 const escalationHandler = new EscalationHandler({})
+const alertRouter = new AlertRouter()
+const blockchainMonitor = new BlockchainMonitor({
+  alertRouter,
+  metricsService: blockchainMetrics,
+  escalationHandler,
+})
 
 // ============================================================================
 // STARTUP VALIDATION — crash fast, not at request time
@@ -566,6 +574,7 @@ app.use('/api/ml', mlRoutes)
 app.use('/api/blockchain', (req, _res, next) => {
   req.blockchainMetrics = blockchainMetrics
   req.escalationHandler = escalationHandler
+  req.blockchainMonitor = blockchainMonitor
   req.supabase = supabaseAdmin
   next()
 }, blockchainMonitoringRoutes)
@@ -762,6 +771,17 @@ server.listen(PORT, () => {
   startWithdrawalSettlementWorker()
   startOutboxRelayWorker()
 
+  // Start BlockchainMonitor during API startup
+  blockchainMonitor.initialize().then((initialized) => {
+    if (initialized) {
+      blockchainMonitor.startListening().catch((err) => {
+        logger.error({ err }, '[BlockchainMonitor] Failed to start listening')
+      })
+    }
+  }).catch((err) => {
+    logger.error({ err }, '[BlockchainMonitor] Failed to initialize')
+  })
+
   // Register worker states for health aggregation
   globalThis.__truxify_workers = {
     escrowRefundReconciliation: true,
@@ -773,6 +793,7 @@ server.listen(PORT, () => {
     devicePruningWorker: true,
     documentExpiryWorker: true,
     withdrawalSettlementWorker: true,
+    blockchainMonitor: true,
   }
 })
 
@@ -806,7 +827,7 @@ async function shutdown(signal) {
   stopWithdrawalSettlementWorker()
   stopOutboxRelayWorker()
   stopStaleOrderWorker()
-  stopDevicePruningWorker()
+  await blockchainMonitor.stopListening()
   fraudDetection.destroy()
   CacheManager.shutdown()
 

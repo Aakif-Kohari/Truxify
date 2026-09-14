@@ -4,6 +4,8 @@ import logger from '../../middleware/logger.js';
 import * as Sentry from '@sentry/node';
 import { supabase, supabaseAdmin } from '../../config/db.js';
 import { measureExecution } from '../../core/performanceMetrics.js';
+import Multicall3Service from './multicall3Service.js';
+import BatchCallBuilder from './batchCallBuilder.js';
 
 const FINALITY_THRESHOLD = 100; // Blocks after which transaction is considered finalized
 const DIVERGENCE_CHECK_INTERVAL = 30000; // 30 seconds
@@ -14,9 +16,19 @@ class StateDivergenceDetector {
   constructor(deps = {}) {
     this.rpcNodes = this.parseRpcNodes();
     this.providers = this.initializeProviders();
+    this.provider = deps.provider || this.providers[0] || null;
+    this.multicallService = deps.multicallService || (this.provider ? new Multicall3Service({ provider: this.provider }) : null);
+    this.batchCallBuilder = deps.batchCallBuilder || new BatchCallBuilder({ provider: this.provider });
+    this.alertRouter = deps.alertRouter || null;
+    this.escalationHandler = deps.escalationHandler || null;
+    this.supabase = deps.supabase || supabaseAdmin || supabase;
     this.divergences = new Map();
     this.stateCache = new Map();
-    this.startMonitoring();
+    this.monitoringTimer = null;
+
+    if (!deps.disableMonitoring && process.env.NODE_ENV !== 'test') {
+      this.startMonitoring();
+    }
   }
 
   parseRpcNodes() {
@@ -31,7 +43,7 @@ class StateDivergenceDetector {
   startMonitoring() {
     const interval = parseInt(process.env.DIVERGENCE_CHECK_INTERVAL_MS || '30000', 10);
 
-    setInterval(async () => {
+    this.monitoringTimer = setInterval(async () => {
       try {
         await this.checkForDivergence();
       } catch (err) {
@@ -40,8 +52,39 @@ class StateDivergenceDetector {
     }, interval);
   }
 
-  async checkForDivergence() {
+  stopMonitoring() {
+    if (this.monitoringTimer) {
+      clearInterval(this.monitoringTimer);
+      this.monitoringTimer = null;
+    }
+  }
+
+  async checkForDivergence(ordersToCheck) {
     return measureExecution('StateDivergenceDetector.checkForDivergence', async () => {
+      let orders = ordersToCheck;
+
+      // If orders were not explicitly passed, query active/recent orders from DB
+      if (!orders && (this.supabase?.from || supabaseAdmin?.from || supabase?.from)) {
+        try {
+          const client = this.supabase || supabaseAdmin || supabase;
+          const { data } = await client
+            .from('orders')
+            .select('id, order_display_id, escrow_status, payment_status, total_amount, updated_at')
+            .in('escrow_status', ['funded', 'locked', 'released', 'payment_released', 'refund_pending', 'refunded', 'disputed'])
+            .order('updated_at', { ascending: false })
+            .limit(50);
+          orders = data;
+        } catch (err) {
+          logger.error({ err }, '[StateDivergenceDetector] Failed to fetch orders for divergence check');
+        }
+      }
+
+      // If orders are available and multicallService is available, perform real state divergence check
+      if (orders && orders.length > 0 && this.multicallService) {
+        return await this.compareOrdersState(orders);
+      }
+
+      // Fallback: Node block number consensus analysis
       const nodeStates = await this.queryAllNodes();
 
       if (nodeStates.length < MIN_CONSENSUS) {
@@ -58,6 +101,178 @@ class StateDivergenceDetector {
       return divergenceResult;
     });
   }
+
+  // ── Real Escrow vs DB State Comparison ───────────────────────────────────
+
+  async compareOrdersState(orders) {
+    return measureExecution('StateDivergenceDetector.compareOrdersState', async () => {
+      const divergences = [];
+
+      if (!orders || orders.length === 0) {
+        return { divergenceDetected: false, divergences: [], count: 0 };
+      }
+
+      if (!this.multicallService) {
+        logger.warn('[StateDivergenceDetector] Multicall service not available, skipping order divergence check');
+        return { divergenceDetected: false, reason: 'multicall_unavailable', divergences: [] };
+      }
+
+      const calls = orders.map(order => {
+        const bookingId = order.bookingId ?? order.booking_id ?? order.order_display_id ?? order.id;
+        let numericBookingId = bookingId;
+        if (typeof bookingId === 'string') {
+          const match = bookingId.match(/\d+/);
+          numericBookingId = match ? match[0] : '0';
+        }
+        return this.batchCallBuilder.buildPaymentStatusCall(numericBookingId);
+      });
+
+      const results = await this.multicallService.batchCalls(calls);
+
+      for (let i = 0; i < results.length; i++) {
+        const res = results[i];
+        const order = orders[i];
+
+        if (!res.success || !res.decoded) {
+          continue;
+        }
+
+        const onChain = res.decoded;
+        const dbStatus = order.escrow_status || order.payment_status || order.status;
+
+        if (this.isStateDiverged(dbStatus, onChain.status, onChain.paid)) {
+          const divergenceId = `div_${crypto.randomBytes(16).toString('hex')}`;
+          const onChainStatusName = this.getOnChainStatusName(onChain.status);
+
+          const divergence = {
+            divergenceId,
+            orderId: order.id,
+            bookingId: order.bookingId ?? order.booking_id ?? order.order_display_id ?? order.id,
+            dbState: {
+              escrow_status: order.escrow_status,
+              payment_status: order.payment_status,
+            },
+            onChainState: {
+              status: Number(onChain.status),
+              statusName: onChainStatusName,
+              paid: Boolean(onChain.paid),
+              amount: onChain.amount,
+            },
+            severity: 'CRITICAL',
+            message: `State divergence detected for order ${order.id}: DB escrow_status is '${order.escrow_status}' but on-chain status is '${onChainStatusName}' (paid: ${onChain.paid})`,
+            detectedAt: new Date().toISOString(),
+          };
+
+          divergences.push(divergence);
+          this.divergences.set(divergenceId, {
+            ...divergence,
+            resolved: false,
+          });
+
+          await this.logOrderDivergence(divergence);
+          await this.alertOrderDivergence(divergence);
+        }
+      }
+
+      return {
+        divergenceDetected: divergences.length > 0,
+        divergences,
+        count: divergences.length,
+      };
+    });
+  }
+
+  isStateDiverged(dbStatus, onChainStatus, onChainPaid) {
+    const normDb = (dbStatus || '').toLowerCase();
+    const statusNum = Number(onChainStatus);
+
+    // 0: Active / Locked / Funded
+    if (statusNum === 0) {
+      if (['released', 'payment_released', 'refunded', 'cancelled'].includes(normDb)) {
+        return true;
+      }
+    }
+    // 1: Delivered / Released
+    else if (statusNum === 1 || onChainPaid === true) {
+      if (['pending', 'funding', 'locked', 'funded', 'active'].includes(normDb)) {
+        return true;
+      }
+    }
+    // 2: Cancelled
+    else if (statusNum === 2) {
+      if (!['cancelled', 'refunded', 'refund_pending'].includes(normDb)) {
+        return true;
+      }
+    }
+    // 3: Disputed
+    else if (statusNum === 3) {
+      if (normDb !== 'disputed') {
+        return true;
+      }
+    }
+    // 4: Resolved
+    else if (statusNum === 4) {
+      if (!['resolved', 'released', 'refunded'].includes(normDb)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  getOnChainStatusName(status) {
+    const names = {
+      0: 'Active',
+      1: 'Delivered',
+      2: 'Cancelled',
+      3: 'Disputed',
+      4: 'Resolved',
+    };
+    return names[Number(status)] || `Unknown(${status})`;
+  }
+
+  async logOrderDivergence(divergence) {
+    try {
+      const client = this.supabase || supabaseAdmin || supabase;
+      if (client?.from) {
+        await client
+          .from('blockchain_divergence_log')
+          .insert([{
+            divergence_id: divergence.divergenceId,
+            severity: divergence.severity,
+            block_divergence: 0,
+            node_states: { orderId: divergence.orderId, dbState: divergence.dbState },
+            canonical_state: divergence.onChainState,
+            detected_at: divergence.detectedAt,
+          }]);
+      }
+      logger.warn('[StateDivergenceDetector] Order state divergence logged:', divergence.divergenceId);
+    } catch (err) {
+      logger.error({ err }, '[StateDivergenceDetector] Failed to log order divergence');
+    }
+  }
+
+  async alertOrderDivergence(divergence) {
+    try {
+      const alert = {
+        type: 'BLOCKCHAIN_STATE_DIVERGENCE',
+        severity: divergence.severity,
+        divergenceId: divergence.divergenceId,
+        orderId: divergence.orderId,
+        message: divergence.message,
+        divergenceDetails: divergence,
+        timestamp: divergence.detectedAt,
+      };
+
+      await this.alertRouter?.route(alert);
+      await this.escalationHandler?.escalate(alert);
+      logger.warn('[StateDivergenceDetector] Divergence alert emitted:', alert.message);
+    } catch (err) {
+      logger.error({ err }, '[StateDivergenceDetector] Failed to alert order divergence');
+    }
+  }
+
+  // ── Node Query & Block Consensus (Legacy Support) ─────────────────────────
 
   async queryAllNodes() {
     const queries = this.providers.map((provider, idx) =>
@@ -90,10 +305,10 @@ class StateDivergenceDetector {
           nodeIndex,
           rpcUrl: this.rpcNodes[nodeIndex],
           blockNumber,
-          blockHash: block.hash,
-          blockTimestamp: block.timestamp,
-          miner: block.miner,
-          transactionCount: block.transactions.length,
+          blockHash: block?.hash,
+          blockTimestamp: block?.timestamp,
+          miner: block?.miner,
+          transactionCount: block?.transactions?.length ?? 0,
           queryTime: Date.now(),
         };
       } catch (err) {
@@ -203,13 +418,13 @@ class StateDivergenceDetector {
   async triggerStateReconciliation(canonicalState) {
     return measureExecution('StateDivergenceDetector.triggerStateReconciliation', async () => {
       try {
-        logger.warn('[StateDivergenceDetector] Triggering state reconciliation from block:', canonicalState.blockNumber);
+        logger.warn('[StateDivergenceDetector] Triggering state reconciliation from block:', canonicalState?.blockNumber);
 
         await (supabaseAdmin || supabase)
           .from('blockchain_reconciliation_jobs')
           .insert([{
             status: 'pending',
-            source_block_number: canonicalState.blockNumber,
+            source_block_number: canonicalState?.blockNumber,
             canonical_state: canonicalState,
             created_at: new Date().toISOString(),
           }]);
