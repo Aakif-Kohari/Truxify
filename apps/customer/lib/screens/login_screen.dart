@@ -62,6 +62,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _checkExistingSessionAndBiometrics() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final bool hasSession = prefs.getBool('is_authenticated') ?? false;
 
     if (hasSession) {
@@ -85,6 +86,7 @@ class _LoginScreenState extends State<LoginScreen> {
         if (!mounted) return;
 
         final prefs = await SharedPreferences.getInstance();
+        if (!mounted) return;
         final bool hasSession = prefs.getBool('is_authenticated') ?? false;
 
         if (hasSession) {
@@ -100,7 +102,6 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (_) {
       // Gracefully fall back to standard OTP form if biometrics are cancelled/fail
     }
-  }
   }
   void _sendOtp() {
     FocusScope.of(context).unfocus();
