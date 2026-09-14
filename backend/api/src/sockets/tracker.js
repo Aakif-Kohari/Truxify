@@ -635,6 +635,8 @@ export function initWebSocketServer(server, orderRepository) {
 
     ws.on('close', () => {
       logger.info('WebSocket connection closed');
+      ws.pendingAuthQueue = [];
+      ws.isAuthenticating = false;
       void (async () => {
         await removeClientFromAllSubscriptions(ws);
         if (ws.driverId) await removeDriverLocationChannels(ws.driverId);
@@ -685,6 +687,8 @@ export function initWebSocketServer(server, orderRepository) {
     // event so credentials never leak via query strings into proxies, logs or
     // web analytics (issue #5739).
     ws.authenticated = false;
+    ws.isAuthenticating = false;
+    ws.pendingAuthQueue = [];
     const authTimeout = setTimeout(() => {
       if (ws.authenticated === false) {
         ws.send(JSON.stringify({ error: 'Unauthorized: Authentication timeout', code: 4001 }));
@@ -812,18 +816,51 @@ export async function handleTrackingMessage(ws, message, req) {
       return ws.send(JSON.stringify({ error: 'Invalid payload format. Must include "event" and "data" keys.' }));
     }
 
+    if (ws.isAuthenticating) {
+      if (!ws.pendingAuthQueue) {
+        ws.pendingAuthQueue = [];
+      }
+      if (ws.pendingAuthQueue.length < 50) {
+        ws.pendingAuthQueue.push({ message, req });
+      } else {
+        ws.send(JSON.stringify({ error: 'Queue limit exceeded during authentication', code: 4008 }));
+        ws.close(4008, 'Queue limit exceeded during authentication');
+      }
+      return;
+    }
+
     // First-frame auth handshake (issue #5739): a client that connected
     // without a `token` query parameter must present a bearer token in an
     // `auth` event before any other message is accepted.
     if (ws.authenticated === false) {
       if (event === 'auth') {
-        await authenticateWs(ws, data.token);
-        if (ws.authenticated) {
-          ws.send(JSON.stringify({
-            status: 'authenticated',
-            user_id: ws.user?.id ?? ws.driverId,
-          }));
-          logger.info('New WebSocket connection established on /ws/tracking (first-frame auth)');
+        ws.isAuthenticating = true;
+        try {
+          await authenticateWs(ws, data.token);
+          if (ws.authenticated) {
+            ws.send(JSON.stringify({
+              status: 'authenticated',
+              user_id: ws.user?.id ?? ws.driverId,
+            }));
+            logger.info('New WebSocket connection established on /ws/tracking (first-frame auth)');
+
+            const queue = ws.pendingAuthQueue || [];
+            ws.pendingAuthQueue = [];
+            ws.isAuthenticating = false;
+
+            for (const item of queue) {
+              if (ws.readyState === 1 && ws.authenticated) {
+                await handleTrackingMessage(ws, item.message, item.req);
+              }
+            }
+          } else {
+            ws.pendingAuthQueue = [];
+            ws.isAuthenticating = false;
+          }
+        } catch (err) {
+          ws.pendingAuthQueue = [];
+          ws.isAuthenticating = false;
+          throw err;
         }
         return;
       }

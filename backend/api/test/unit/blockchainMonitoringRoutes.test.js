@@ -176,5 +176,14 @@ describe('blockchainMonitoringRoutes', () => {
 
     const mountSegment = src.slice(src.indexOf("app.use('/api/blockchain'"));
     expect(mountSegment).toMatch(/req\.supabase\s*=\s*supabaseAdmin/);
+    expect(src).toMatch(/BLOCKCHAIN_MONITORING_MOUNTED/);
+  });
+
+  it('regression: table-querying endpoints delegate through req.supabase (service-role client from the index.js mount)', () => {
+    const ROUTES_PATH = path.resolve(__dirname, '../../src/routes/blockchainMonitoringRoutes.js');
+    const src = fs.readFileSync(ROUTES_PATH, 'utf8');
+
+    expect(src).toMatch(/resolveSupabaseClient\(\s*req\s*\)\s*\.from\('blockchain_monitoring_events'\)/);
+    expect(src).toMatch(/resolveSupabaseClient\(\s*req\s*\)\s*\.from\('blockchain_escalations'\)/);
   });
 });

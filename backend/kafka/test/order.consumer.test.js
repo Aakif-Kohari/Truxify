@@ -177,9 +177,9 @@ describe('OrderConsumer side-effect topics', () => {
       { key: Buffer.from(ORDER_ID) }
     );
 
-    expect(claimProcessingMock).toHaveBeenCalledWith('payment.confirmed', 'evt-pay-1', ORDER_ID);
+    expect(claimProcessingMock).toHaveBeenCalledWith('payment.confirmed', 'evt-pay-1', ORDER_ID, 'order-service');
     expect(handler).toHaveBeenCalled();
-    expect(markCompletedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-pay-1');
+    expect(markCompletedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-pay-1', 'order-service');
     expect(markFailedMock).not.toHaveBeenCalled();
     expect(orderReadModel.applyEvent).not.toHaveBeenCalled();
   });
@@ -213,7 +213,7 @@ describe('OrderConsumer side-effect topics', () => {
     );
 
     expect(handler).toHaveBeenCalled();
-    expect(markFailedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-pay-2');
+    expect(markFailedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-pay-2', 'order-service');
     expect(markCompletedMock).not.toHaveBeenCalled();
     // The failed message is still dead-lettered for manual inspection.
     expect(storeMock).toHaveBeenCalled();
@@ -234,7 +234,7 @@ describe('OrderConsumer side-effect topics', () => {
       { key: Buffer.from(ORDER_ID) }
     );
 
-    expect(markFailedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-pay-3');
+    expect(markFailedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-pay-3', 'order-service');
     expect(markCompletedMock).not.toHaveBeenCalled();
   });
 
