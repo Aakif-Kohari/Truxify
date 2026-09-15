@@ -209,7 +209,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -293,8 +293,6 @@ services:
   clamav:
     image: clamav/clamav:1.4
     container_name: truxify-clamav
-    ports:
-      - "${CLAMAV_PORT:-3310}:3310"
     volumes:
       - clamav_data:/var/lib/clamav
     deploy:
