@@ -140,15 +140,25 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
     });
 
     it('returns 401 when signature is invalid', async () => {
+      const timestamp = Date.now();
+      const nonce = crypto.randomUUID();
       const res = await request(app).post('/api/webhooks/escrow')
-        .set('X-Webhook-Signature', 'invalid-signature-value').send({ eventType: 'EscrowFunded' });
+        .set('X-Webhook-Signature', 'invalid-signature-value')
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
+        .send({ eventType: 'EscrowFunded' });
       expect(res.status).toBe(401);
       expect(res.body.error).toBe('Invalid webhook signature');
     });
 
     it('returns 401 when signature has wrong length', async () => {
+      const timestamp = Date.now();
+      const nonce = crypto.randomUUID();
       const res = await request(app).post('/api/webhooks/escrow')
-        .set('X-Webhook-Signature', 'abc123').send({ eventType: 'EscrowFunded' });
+        .set('X-Webhook-Signature', 'abc123')
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
+        .send({ eventType: 'EscrowFunded' });
       expect(res.status).toBe(401);
       expect(res.body.error).toBe('Invalid webhook signature');
     });
@@ -233,7 +243,7 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
     });
 
     it('returns 202 and enqueues to DLQ on processing failure with valid signature', async () => {
-      const payload = { eventType: 'PaymentReleased' };
+      const payload = { eventType: 'PaymentReleased', simulateFailure: true };
       const { signature, timestamp, nonce } = signPayload(payload);
       const res = await request(app).post('/api/webhooks/escrow')
         .set('X-Webhook-Signature', signature)
@@ -247,7 +257,7 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
 
     it('returns 500 instead of 202 when the DLQ enqueue fails', async () => {
       mockEnqueueFailure.mockResolvedValueOnce(false);
-      const payload = { eventType: 'PaymentReleased' };
+      const payload = { eventType: 'PaymentReleased', simulateFailure: true };
       const { signature, timestamp, nonce } = signPayload(payload);
       const res = await request(app).post('/api/webhooks/escrow')
         .set('X-Webhook-Signature', signature)
