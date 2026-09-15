@@ -194,6 +194,8 @@ void main() {
       await tester.pump();
       messages.add(jsonEncode({'status': 'authenticated'}));
       await tester.pumpAndSettle();
+      messages.add(jsonEncode({'status': 'authenticated'}));
+      await tester.pumpAndSettle();
 
       expect(orderFetches, 2);
       expect(timelineFetches, 2);

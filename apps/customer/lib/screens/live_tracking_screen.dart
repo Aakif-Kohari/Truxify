@@ -71,6 +71,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   // ── WebSocket connection state ────────────────────────────────────
   bool _wsConnected = false;
   bool _hasAuthenticatedWebSocket = false;
+  bool _authenticatedForCurrentConnection = false;
   DateTime? _latestLocationAt;
   String? _mlEta;
 
@@ -182,6 +183,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       urlFactory: buildUrl,
       onConnect: () {
         debugPrint('WebSocket connected, authenticating...');
+        _authenticatedForCurrentConnection = false;
         if (mounted) setState(() => _wsConnected = true);
         final session = SupabaseService.client.auth.currentSession;
         final token = session?.accessToken ?? '';
@@ -207,7 +209,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         final payload = jsonDecode(message) as Map<String, dynamic>;
 
         if (payload['status'] == 'authenticated') {
+          if (_authenticatedForCurrentConnection) return;
+
           final isReconnect = _hasAuthenticatedWebSocket;
+          _authenticatedForCurrentConnection = true;
           _hasAuthenticatedWebSocket = true;
 
           // First-frame auth succeeded; now register for order updates. The
@@ -420,8 +425,9 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         debugPrint('Received Supabase Realtime location update: $payload');
         final lat = (payload['lat'] as num?)?.toDouble();
         final lng = (payload['lng'] as num?)?.toDouble();
+        final timestamp = _parseLocationTimestamp(payload);
         if (lat != null && lng != null && mounted) {
-          _updateTruckPosition(LatLng(lat, lng));
+          _updateTruckPosition(LatLng(lat, lng), timestamp: timestamp);
         }
       },
     ).subscribe((status, error) {
