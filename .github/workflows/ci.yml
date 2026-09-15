@@ -18,11 +18,11 @@ jobs:
     name: Gitleaks Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e
         with:
           fetch-depth: 0
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v3
+        uses: gitleaks/gitleaks-action@e0c47f4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -33,10 +33,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e
 
       - name: Setup Node.js 20
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@8207627
         with:
           node-version: 20
 
@@ -59,16 +59,16 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e
 
       - name: Setup Java 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a44944
         with:
           channel: stable
           cache: true
@@ -100,16 +100,16 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e
 
       - name: Setup Java 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a44944
         with:
           channel: stable
           cache: true
@@ -141,10 +141,10 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e
 
       - name: Setup Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b9
         with:
           python-version: "3.11"
           cache: pip
@@ -163,7 +163,6 @@ jobs:
       - name: Run eBPF tests
         run: python -m pytest ebpf/tests -v
 
-
   contracts:
     name: Smart contract checks
     needs: secret-scan
@@ -171,10 +170,10 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e
 
       - name: Setup Node.js 20
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@8207627
         with:
           node-version: 20
           cache: npm
@@ -202,7 +201,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e
 
       - name: Check for Redis/Upstash credentials in Flutter source
         run: bash scripts/check-no-client-credentials.sh
