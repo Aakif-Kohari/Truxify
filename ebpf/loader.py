@@ -183,7 +183,7 @@ class eBPFMonitor:
         """Get current CPU utilization and time breakdown."""
         cpu_times = psutil.cpu_times_percent(interval=0.1)
         return {
-            'usage': psutil.cpu_percent(interval=None),
+            'usage': round(100.0 - cpu_times.idle, 2),
             'user': cpu_times.user,
             'system': cpu_times.system,
             'idle': cpu_times.idle
