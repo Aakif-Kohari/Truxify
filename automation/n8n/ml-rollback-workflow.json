@@ -88,7 +88,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://ml-engine:8000/train/demand/rollback",
+        "url": "http://ml-engine:8000/train/demand/rollback?test_id={{$node[\"Demand Rollback Decision\"].json.test_id}}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

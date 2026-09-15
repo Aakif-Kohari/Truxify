@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 import hashlib
+import hmac
 import logging
 import os
 import pickle
@@ -16,6 +17,10 @@ logger = logging.getLogger(__name__)
 MODEL_STORAGE_DIR = os.environ.get(
     "MODEL_STORAGE_DIR",
     os.path.join(os.path.dirname(__file__), "..", "..", "models_storage"),
+)
+MODEL_ARTIFACT_SIGNATURE_DIR = os.environ.get(
+    "MODEL_ARTIFACT_SIGNATURE_DIR",
+    os.path.join(os.path.dirname(MODEL_STORAGE_DIR), "model_signatures"),
 )
 
 # ---------------------------------------------------------------------------
@@ -198,6 +203,47 @@ def _mirror_to_flat(model_name: str, generation: str) -> None:
             os.fsync(destination_file.fileno())
         os.replace(temporary_path, destination)
 
+
+def _artifact_signature_path(path: str) -> str:
+    artifact_id = hashlib.sha256(os.path.abspath(path).encode()).hexdigest()
+    os.makedirs(MODEL_ARTIFACT_SIGNATURE_DIR, exist_ok=True)
+    return os.path.join(MODEL_ARTIFACT_SIGNATURE_DIR, f"{artifact_id}.sig")
+
+
+def _artifact_hmac_key() -> bytes:
+    key = os.environ.get("MODEL_ARTIFACT_HMAC_KEY")
+    if not key:
+        raise RuntimeError("MODEL_ARTIFACT_HMAC_KEY must be configured to load or save model artifacts")
+    return key.encode()
+
+
+def _sign_artifact(path: str) -> None:
+    digest = hmac.new(_artifact_hmac_key(), digestmod=hashlib.sha256)
+    with open(path, "rb") as file:
+        for chunk in iter(lambda: file.read(8192), b""):
+            digest.update(chunk)
+    signature_path = _artifact_signature_path(path)
+    temporary_path = f"{signature_path}.{uuid.uuid4().hex}.tmp"
+    with open(temporary_path, "w") as file:
+        file.write(digest.hexdigest())
+        file.flush()
+        os.fsync(file.fileno())
+    os.replace(temporary_path, signature_path)
+
+
+def _verify_artifact(path: str) -> bool:
+    signature_path = _artifact_signature_path(path)
+    try:
+        with open(signature_path, "r") as file:
+            expected = file.read().strip()
+        digest = hmac.new(_artifact_hmac_key(), digestmod=hashlib.sha256)
+        with open(path, "rb") as file:
+            for chunk in iter(lambda: file.read(8192), b""):
+                digest.update(chunk)
+        return hmac.compare_digest(digest.hexdigest(), expected)
+    except (OSError, RuntimeError):
+        return False
+
 def get_model_hash_path(model_name: str) -> str:
     os.makedirs(MODEL_STORAGE_DIR, exist_ok=True)
     return os.path.join(MODEL_STORAGE_DIR, f"{model_name}.sha256")
@@ -291,6 +337,7 @@ def save_model(model: Any, model_name: str, metrics: Optional[dict] = None, trai
                     raise ValueError(f"Generated artifact for '{model_name}' is empty")
             os.replace(model_tmp, model_path)
             os.replace(meta_tmp, meta_path)
+            _sign_artifact(model_path)
             active_path = _active_ptr_path(model_name)
             previous_path = _previous_ptr_path(model_name)
             current = get_active_generation(model_name)
@@ -298,6 +345,7 @@ def save_model(model: Any, model_name: str, metrics: Optional[dict] = None, trai
                 _atomic_write_json(previous_path, {"generation": current})
             _atomic_write_json(active_path, {"generation": generation})
             _mirror_to_flat(model_name, generation)
+            _sign_artifact(get_model_path(model_name))
         finally:
             for temporary_path in (model_tmp, meta_tmp):
                 try:
@@ -382,6 +430,9 @@ def _generation_candidates(model_name: str):
 def load_model(model_name: str) -> Optional[Any]:
     for path, _ in _generation_candidates(model_name):
         if os.path.exists(path):
+            if not _verify_artifact(path):
+                logger.error(" refusing to load unsigned or invalid model artifact: %s", path)
+                continue
             with open(path, "rb") as file:
                 return pickle.load(file)
     logger.warning("Model '%s' not found", model_name)
