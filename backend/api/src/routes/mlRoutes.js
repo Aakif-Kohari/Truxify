@@ -153,6 +153,8 @@ router.get(
       logger.error({ err: err.message }, '[ML] En-route loads error');
       return res.status(500).json({ error: 'An error occurred during en-route loads matching.' });
     }
+  }
+);
 // ============================================================================
 // 5. A/B TESTING STATUS & ROLLBACK (ADMIN PROXIED)
 // ============================================================================
