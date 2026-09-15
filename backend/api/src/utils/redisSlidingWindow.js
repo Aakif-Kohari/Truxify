@@ -1,4 +1,4 @@
-const { createClient } = require('redis');
+import { createClient } from 'redis';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const redisClient = createClient({ url: redisUrl });
@@ -44,7 +44,7 @@ const loadScript = async () => {
     return scriptSha;
 };
 
-const checkRateLimit = async (key, windowMs, maxRequests) => {
+export const checkRateLimit = async (key, windowMs, maxRequests) => {
     try {
         await connectRedis();
         const sha = await loadScript();
@@ -62,9 +62,10 @@ const checkRateLimit = async (key, windowMs, maxRequests) => {
     }
 };
 
-module.exports = {
+export { redisClient };
+
+export default {
     checkRateLimit,
     redisClient,
 };
 
-module.exports.default = module.exports;

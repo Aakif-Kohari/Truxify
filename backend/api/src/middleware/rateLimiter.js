@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/node";
 import { redisClient } from "../config/db.js";
 import crypto from "crypto";
 import logger from "./logger.js";
+import { checkRateLimit } from "../utils/redisSlidingWindow.js";
 
 function isRedisReady() {
   return !!(redisClient && redisClient.status === "ready");
@@ -530,8 +531,6 @@ export function createStore(prefix) {
 }
 
 export const __testing = { DeferredRedisStore, isRedisReady };
-
-const { checkRateLimit } = require('../utils/redisSlidingWindow');
 
 const WINDOW_MS = 60 * 1000; 
 const MAX_REQUESTS = 30; 
