@@ -167,7 +167,6 @@ import {
   createOrder,
   getActiveOrders,
   getLoadOffers,
-  getEnRouteLoads,
   getOrderHistory,
   getOrderDetails,
   getOrderTimeline,
