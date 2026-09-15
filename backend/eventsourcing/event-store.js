@@ -1,6 +1,6 @@
 import { randomUUID as uuidv4 } from 'node:crypto';
 import logger from '../api/src/middleware/logger.js';
-import { supabase } from '../api/src/config/db.js';
+import { supabase, supabaseAdmin } from '../api/src/config/db.js';
 import { BaseEvent, EVENT_SOURCES, EVENT_CATEGORIES } from '../api/src/core/events/index.js';
 import { ContextPropagator } from '../api/src/core/telemetry/ContextPropagator.js';
 import spanFactory from '../api/src/core/telemetry/SpanFactory.js';
@@ -13,6 +13,7 @@ import {
   EventStorePersistenceError,
   toEventStoreError,
 } from './errors.js';
+import { deriveOrderStatus } from '../api/src/core/orders/read-model-schema.js';
 
 // Topic names mirror the values in backend/kafka/config/kafka.config.js.
 // They are duplicated here (instead of importing TOPICS) so this package does
@@ -70,7 +71,8 @@ function createSupabaseDb(supabaseClient, loggerAdapter) {
         .upsert([row], {
           onConflict: 'aggregate_id,version',
           ignoreDuplicates: true,
-        });
+        })
+        .select();
     },
 
     async fetchSnapshot(aggregateId) {
@@ -106,7 +108,7 @@ class EventStore {
         this.isInitialized = false;
         this._eventBus = externalEventBus || null;
         this._db = db; // injectable for tests; defaults to supabase-backed adapter
-        this._client = client || supabase; // injectable for tests; defaults to the supabase client
+        this._client = client || supabaseAdmin || supabase; // defaults to service-role admin client (RLS policy on event_store is service_role only)
         this._core = null;
         this._kafka = undefined; // lazy kafka module (null when unavailable)
     }
@@ -421,6 +423,7 @@ class EventStore {
             .upsert([{
                 order_id: orderId,
                 payload: state,
+                status: deriveOrderStatus(state),
                 event_type: eventType,
                 version: version ?? state?.version,
                 updated_at: new Date().toISOString()
@@ -571,7 +574,7 @@ class EventStore {
             .select('*');
 
         if (filters.status) {
-            query = query.eq('payload->>status', filters.status);
+            query = query.eq('status', filters.status);
         }
         if (filters.customerId) {
             query = query.eq('payload->>customerId', filters.customerId);
@@ -627,7 +630,7 @@ class EventStore {
 }
 
 export default new EventStore();
-export { EventStore, EventStoreVersionConflictError, EventStorePersistenceError };
+export { EventStore, EventStoreVersionConflictError, EventStorePersistenceError, createSupabaseDb };
 
 
 // === Spec 36: ===

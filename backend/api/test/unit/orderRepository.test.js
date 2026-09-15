@@ -185,3 +185,86 @@ describe('OrderRepository.findStaleFundingOrders', () => {
     expect(trace.gt).toEqual(['updated_at', '2026-02-01T00:00:00.000Z']);
   });
 });
+
+describe('OrderRepository truck lookup null guards', () => {
+  const TRUCK_UUID = '99999999-8888-7777-6666-555555555555';
+
+  function buildTruckStub() {
+    const calls = [];
+    return {
+      calls,
+      supabase: {
+        from: vi.fn(() => {
+          calls.push('from');
+          return {
+            select: vi.fn(() => {
+              calls.push('select');
+              return {
+                eq: vi.fn(() => {
+                  calls.push('eq');
+                  return { maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null })) };
+                }),
+                in: vi.fn(() => {
+                  calls.push('in');
+                  return Promise.resolve({ data: [], error: null });
+                }),
+              };
+            }),
+          };
+        }),
+      },
+    };
+  }
+
+  it('findTruckById returns null without querying the database for a null id', async () => {
+    const { calls, supabase } = buildTruckStub();
+    const repo = new OrderRepository(supabase);
+
+    const nullResult = await repo.findTruckById(null);
+    const undefinedResult = await repo.findTruckById(undefined);
+
+    expect(nullResult).toEqual({ data: null, error: null });
+    expect(undefinedResult).toEqual({ data: null, error: null });
+    expect(calls).toEqual([]);
+  });
+
+  it('findTruckById queries the database for a valid id', async () => {
+    const { calls, supabase } = buildTruckStub();
+    const repo = new OrderRepository(supabase);
+
+    await repo.findTruckById(TRUCK_UUID, 'id, name');
+
+    expect(calls).toEqual(['from', 'select', 'eq']);
+  });
+
+  it('findTruckWithDetails returns null without querying the database for a null id', async () => {
+    const { calls, supabase } = buildTruckStub();
+    const repo = new OrderRepository(supabase);
+
+    const result = await repo.findTruckWithDetails(null);
+
+    expect(result).toEqual({ data: null, error: null });
+    expect(calls).toEqual([]);
+  });
+
+  it('findTrucksByIds returns an empty list without querying for empty ids', async () => {
+    const { calls, supabase } = buildTruckStub();
+    const repo = new OrderRepository(supabase);
+
+    const emptyResult = await repo.findTrucksByIds([]);
+    const nullResult = await repo.findTrucksByIds(null);
+
+    expect(emptyResult).toEqual({ data: [], error: null });
+    expect(nullResult).toEqual({ data: [], error: null });
+    expect(calls).toEqual([]);
+  });
+
+  it('findTrucksByIds queries the database for a non-empty id list', async () => {
+    const { calls, supabase } = buildTruckStub();
+    const repo = new OrderRepository(supabase);
+
+    await repo.findTrucksByIds([TRUCK_UUID]);
+
+    expect(calls).toEqual(['from', 'select', 'in']);
+  });
+});

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { escapeLike, escapeSqlLike } from '../../src/lib/escapeLike.js';
 
 describe('escapeLike', () => {
@@ -150,8 +150,7 @@ describe('escapeLike and escapeSqlLike - additional coverage', () => {
     expect(escapeLike('[test]')).toBe('[test]');
     expect(escapeSqlLike('[test]')).toBe('\\[test\\]');
   });
-
-  it('returns the input unchanged for nullish values in both functions', () => {
+it('returns the input unchanged for nullish values in both functions', () => {
     expect(escapeLike(null)).toBeNull();
     expect(escapeSqlLike(null)).toBeNull();
     expect(escapeLike(undefined)).toBeUndefined();
@@ -159,7 +158,7 @@ describe('escapeLike and escapeSqlLike - additional coverage', () => {
   });
 
   it('handles a large number of mixed wildcard escapes in the same string', () => {
-    const input = '%%__[x]\_%_[]_\\%__';
+    const input = '%%__[x]\_%_[]_\%__';
     expect(escapeSqlLike(input)).toBe('\\%\\%\\_\\_\\[x\\]\\_\\%\\_\\[\\]\\_\\\\\\%\\_\\_');
   });
 
@@ -209,5 +208,45 @@ describe('escapeLike and escapeSqlLike - additional coverage', () => {
     const escaped = escapeSqlLike(input);
     expect(escaped).toBe('100\\%\\_done');
     expect(escapeSqlLike(escaped)).toBe('100\\\\\\%\\\\\\_done');
+  });
+
+  it('should handle complex mixed wildcards and brackets', () => {
+    expect(escapeSqlLike('user_%[test]\\1')).toBe('user\\_\\%\\[test\\]\\\\1');
+  });
+
+  it('should handle complex nested wildcard and bracket combinations (% _ [ ] \\)', () => {
+    const input = 'user_%[test]\\100%_admin[root]';
+    const expected = 'user\\_\\%\\[test\\]\\\\100\\%\\_admin\\[root\\]';
+    expect(escapeSqlLike(input)).toBe(expected);
+  });
+});
+
+describe('escapeLike and escapeSqlLike - backslash escape character', () => {
+  it('escapeLike escapes a lone backslash', () => {
+    expect(escapeLike('\\')).toBe('\\\\');
+  });
+
+  it('escapeLike escapes backslash before the % wildcard', () => {
+    expect(escapeLike('\\%')).toBe('\\\\\\%');
+  });
+
+  it('escapeLike escapes backslash before the _ wildcard', () => {
+    expect(escapeLike('a\\_b')).toBe('a\\\\\\_b');
+  });
+
+  it('escapeLike escapes backslashes inside plain text', () => {
+    expect(escapeLike('\\a\\b')).toBe('\\\\a\\\\b');
+  });
+
+  it('escapeLike escapes backslash combined with both wildcards', () => {
+    expect(escapeLike('%\\_')).toBe('\\%\\\\\\_');
+  });
+
+  it('escapeSqlLike escapes a lone backslash', () => {
+    expect(escapeSqlLike('\\')).toBe('\\\\');
+  });
+
+  it('escapeSqlLike escapes backslash inside square brackets', () => {
+    expect(escapeSqlLike('[\\]')).toBe('\\[\\\\\\]');
   });
 });

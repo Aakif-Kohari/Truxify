@@ -177,22 +177,22 @@ class _BookingConfirmationScreenState extends State<BookingConfirmationScreen>
           : widget.draft.dateLabel;
 
       final orderId = await _orderService.createOrder(
-        pickupAddress: widget.draft.pickup,
-        dropAddress: _selectedAddress?.fullAddress ?? widget.draft.drop,
+        pickupAddress: widget.draft.pickup.trim(),
+        dropAddress: (_selectedAddress?.fullAddress ?? widget.draft.drop).trim(),
         pickupLat: widget.draft.pickupLat!,
         pickupLng: widget.draft.pickupLng!,
         dropLat: finalDropLat,
         dropLng: finalDropLng,
-        pickupTime: widget.draft.dateLabel,
+        pickupTime: widget.draft.dateLabel.trim(),
         pickupDate: widget.draft.pickupDate,
-        goodsType: widget.draft.goodsType + (_isPassengerMode ? ' + Passenger' : ''),
-        weightTonnes: double.tryParse(widget.draft.weightTonnes) ?? 0,
-        paymentMethodId: _selectedPayment?.id,
+        goodsType: (widget.draft.goodsType + (_isPassengerMode ? ' + Passenger' : '')).trim(),
+        weightTonnes: double.tryParse(widget.draft.weightTonnes.trim()) ?? 0,
+        paymentMethodId: _selectedPayment?.id?.trim(),
         requiresRefrigeration: widget.draft.requiresRefrigeration,
         targetTemperatureMin: widget.draft.targetTemperatureMin,
         targetTemperatureMax: widget.draft.targetTemperatureMax,
-        driverId: widget.truck.driverId,
-        truckId: widget.truck.truckId,
+        driverId: widget.truck.driverId.trim(),
+        truckId: widget.truck.truckId.trim(),
       );
 
       _createdOrderId = orderId;

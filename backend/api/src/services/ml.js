@@ -284,6 +284,65 @@ export async function predictEta({
 }
 
 /**
+ * Calculates the proportional cancellation penalty for a trip already in
+ * progress. The ML service owns the distance ratio and returns the amount in
+ * the same currency unit supplied by the caller.
+ *
+ * @param {object} params
+ * @param {number} params.distanceCoveredKm - Distance already travelled
+ * @param {number} params.totalDistanceKm - Original route distance
+ * @param {number} params.totalAmount - Original booking amount
+ * @returns {Promise<{penalty_amount: number, covered_ratio: number}>}
+ */
+export async function predictCancellationPenalty({
+  distanceCoveredKm,
+  totalDistanceKm,
+  totalAmount,
+}) {
+  guardMlApiKey();
+
+  if (!Number.isFinite(distanceCoveredKm) || distanceCoveredKm < 0) {
+    throw new Error('[ML] distanceCoveredKm must be a finite non-negative number');
+  }
+  if (!Number.isFinite(totalDistanceKm) || totalDistanceKm <= 0) {
+    throw new Error('[ML] totalDistanceKm must be a finite positive number');
+  }
+  if (!Number.isFinite(totalAmount) || totalAmount < 0) {
+    throw new Error('[ML] totalAmount must be a finite non-negative number');
+  }
+
+  const url = `${getBaseUrl()}/cancellation-penalty`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      distance_covered_km: distanceCoveredKm,
+      total_distance_km: totalDistanceKm,
+      total_amount: totalAmount,
+    }),
+    signal: AbortSignal.timeout(ML_HTTP_TIMEOUT_MS),
+  });
+
+  const result = await handleResponse(response, url, 'POST');
+  if (
+    result == null ||
+    !Number.isFinite(result.penalty_amount) ||
+    result.penalty_amount < 0 ||
+    result.penalty_amount > totalAmount ||
+    !Number.isFinite(result.covered_ratio) ||
+    result.covered_ratio < 0 ||
+    result.covered_ratio > 1
+  ) {
+    throw new Error('[ML] Invalid cancellation penalty response');
+  }
+
+  return {
+    penalty_amount: result.penalty_amount,
+    covered_ratio: result.covered_ratio,
+  };
+}
+
+/**
  * Predicts driver profit for a given route using ML model.
  *
  * @param {object} params
@@ -530,36 +589,43 @@ function _haversineKm(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * Fetches A/B testing status from the ML engine.
+ * @returns {Promise<object>}
+ */
+export async function getAbTestingStatus() {
+  guardMlApiKey();
+  const url = `${getBaseUrl()}/ab-testing/status`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getHeaders(),
+    signal: AbortSignal.timeout(ML_HTTP_TIMEOUT_MS),
+  });
+  return handleResponse(response, url, 'GET');
+}
+
+/**
+ * Triggers an A/B test rollback on the ML engine.
+ * @param {string} testId
+ * @returns {Promise<object>}
+ */
+export async function rollbackAbTest(testId) {
+  guardMlApiKey();
+  if (!testId || typeof testId !== 'string') {
+    throw new Error('[ML] Valid testId is required for rollback');
+  }
+  const url = `${getBaseUrl()}/ab-testing/rollback/${encodeURIComponent(testId)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getHeaders(),
+    signal: AbortSignal.timeout(ML_HTTP_TIMEOUT_MS),
+  });
+  return handleResponse(response, url, 'POST');
+}
+
 export const __testing = {
   demandCache,
   priceCache,
   _haversineKm,
   parseWeightKg,
 };
-
-class MLService {
-  async handleResponse(response, url = '', method = 'GET') {
-    let data;
-    try {
-      data = await response.json();
-    } catch (err) {
-      throw new Error(`[ML] Failed to parse JSON response from ${method} ${url} (Status: ${response.status})`, { cause: err });
-    }
-
-    if (response.status === 401) {
-      throw new Error(`[ML] Authentication failed: ${method} ${url} (${response.status})`);
-    }
-
-    if (response.status === 403) {
-      throw new Error(`[ML] Forbidden: ${method} ${url} (${response.status})`);
-    }
-
-    if (!response.ok) {
-      throw new Error(`[ML] Request failed: ${method} ${url} ${response.status}`);
-    }
-
-    return data;
-  }
-}
-
-export default new MLService();

@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { createLocationEventBus } from './locationEventBus.js';
 import telemetryBuffer from './telemetryBuffer.js';
 import GpsLog from '../models/GpsLog.js';
+import DeliveryDelayService from '../services/order/deliveryDelayService.js';
 
 const TELEMETRY_SCHEMA = {
   lat: { type: 'number', required: false, min: -90, max: 90 },
@@ -64,6 +65,7 @@ function sanitizeTelemetryData(data) {
 }
 
 let _orderRepository = null;
+let _deliveryDelayService = null;
 
 // In-memory mapping of active client subscriptions (process-local by design;
 // distributed fan-out across replicas is handled by the locationEventBus).
@@ -584,6 +586,7 @@ export function initWebSocketServer(server, orderRepository) {
   }
 
   _orderRepository = orderRepository;
+  _deliveryDelayService = orderRepository ? new DeliveryDelayService({ orderRepository }) : null;
   const MAX_WS_PAYLOAD_BYTES = parseInt(process.env.WS_MAX_PAYLOAD_BYTES, 10) || 4096;
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES });
   wsServer = wss;
@@ -635,6 +638,8 @@ export function initWebSocketServer(server, orderRepository) {
 
     ws.on('close', () => {
       logger.info('WebSocket connection closed');
+      ws.pendingAuthQueue = [];
+      ws.isAuthenticating = false;
       void (async () => {
         await removeClientFromAllSubscriptions(ws);
         if (ws.driverId) await removeDriverLocationChannels(ws.driverId);
@@ -685,6 +690,8 @@ export function initWebSocketServer(server, orderRepository) {
     // event so credentials never leak via query strings into proxies, logs or
     // web analytics (issue #5739).
     ws.authenticated = false;
+    ws.isAuthenticating = false;
+    ws.pendingAuthQueue = [];
     const authTimeout = setTimeout(() => {
       if (ws.authenticated === false) {
         ws.send(JSON.stringify({ error: 'Unauthorized: Authentication timeout', code: 4001 }));
@@ -812,18 +819,51 @@ export async function handleTrackingMessage(ws, message, req) {
       return ws.send(JSON.stringify({ error: 'Invalid payload format. Must include "event" and "data" keys.' }));
     }
 
+    if (ws.isAuthenticating) {
+      if (!ws.pendingAuthQueue) {
+        ws.pendingAuthQueue = [];
+      }
+      if (ws.pendingAuthQueue.length < 50) {
+        ws.pendingAuthQueue.push({ message, req });
+      } else {
+        ws.send(JSON.stringify({ error: 'Queue limit exceeded during authentication', code: 4008 }));
+        ws.close(4008, 'Queue limit exceeded during authentication');
+      }
+      return;
+    }
+
     // First-frame auth handshake (issue #5739): a client that connected
     // without a `token` query parameter must present a bearer token in an
     // `auth` event before any other message is accepted.
     if (ws.authenticated === false) {
       if (event === 'auth') {
-        await authenticateWs(ws, data.token);
-        if (ws.authenticated) {
-          ws.send(JSON.stringify({
-            status: 'authenticated',
-            user_id: ws.user?.id ?? ws.driverId,
-          }));
-          logger.info('New WebSocket connection established on /ws/tracking (first-frame auth)');
+        ws.isAuthenticating = true;
+        try {
+          await authenticateWs(ws, data.token);
+          if (ws.authenticated) {
+            ws.send(JSON.stringify({
+              status: 'authenticated',
+              user_id: ws.user?.id ?? ws.driverId,
+            }));
+            logger.info('New WebSocket connection established on /ws/tracking (first-frame auth)');
+
+            const queue = ws.pendingAuthQueue || [];
+            ws.pendingAuthQueue = [];
+            ws.isAuthenticating = false;
+
+            for (const item of queue) {
+              if (ws.readyState === 1 && ws.authenticated) {
+                await handleTrackingMessage(ws, item.message, item.req);
+              }
+            }
+          } else {
+            ws.pendingAuthQueue = [];
+            ws.isAuthenticating = false;
+          }
+        } catch (err) {
+          ws.pendingAuthQueue = [];
+          ws.isAuthenticating = false;
+          throw err;
         }
         return;
       }
@@ -1179,6 +1219,20 @@ export async function handleLocationPing(ws, data, req) {
     } catch (err) {
       logger.error('Failed to resolve order details in tracker:', err.message);
     }
+  }
+
+  // Recalculate ETA only after the authenticated driver/order ownership check
+  // above has succeeded. This is best-effort and never blocks telemetry or
+  // location broadcasts.
+  if (_deliveryDelayService && orderUUID) {
+    void _deliveryDelayService.processLocation({
+      orderId: orderUUID,
+      driverId: driver_id,
+      latitude: sanitized.lat,
+      longitude: sanitized.lng,
+    }).catch((err) => {
+      logger.warn({ err, orderId: orderUUID, driverId: driver_id }, '[Tracker] Delivery ETA update failed');
+    });
   }
 
   // Buffer write with capacity limit. Synchronous, non-blocking enqueue into
