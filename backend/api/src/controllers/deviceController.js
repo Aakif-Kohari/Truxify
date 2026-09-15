@@ -334,29 +334,15 @@ export async function updateLocation(req, res, next) {
 
     const { latitude, longitude, heading, speed } = req.body;
 
-   const lat = Number(latitude);
-if (
-  latitude === null ||
-  latitude === undefined ||
-  latitude === '' ||
-  !Number.isFinite(lat) ||
-  lat < -90 ||
-  lat > 90
-) {
-  return res.status(400).json({ error: 'latitude must be a valid number between -90 and 90' });
-}
+    const lat = parseFloat(latitude);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+      return res.status(400).json({ error: 'latitude must be a valid number between -90 and 90' });
+    }
 
-    const lng = Number(longitude);
-if (
-  longitude === null ||
-  longitude === undefined ||
-  longitude === '' ||
-  !Number.isFinite(lng) ||
-  lng < -180 ||
-  lng > 180
-) {
-  return res.status(400).json({ error: 'longitude must be a valid number between -180 and 180' });
-}
+    const lng = parseFloat(longitude);
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'longitude must be a valid number between -180 and 180' });
+    }
 
     const parsedHeading = Number.isFinite(parseFloat(heading)) ? parseFloat(heading) : null;
     const parsedSpeed   = Number.isFinite(parseFloat(speed))   ? parseFloat(speed)   : null;
