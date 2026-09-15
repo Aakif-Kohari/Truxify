@@ -24,7 +24,7 @@
   "dependencies": {
     "@opentelemetry/exporter-trace-otlp-grpc": "^0.221.0",
     "@opentelemetry/instrumentation-express": "^0.69.0",
-    "@opentelemetry/instrumentation-http": "^0.221.0",
+    "@opentelemetry/instrumentation-http": "^0.222.0",
     "@opentelemetry/instrumentation-mongodb": "^0.75.0",
     "@opentelemetry/instrumentation-pino": "^0.67.0",
     "@opentelemetry/instrumentation-redis": "^0.69.0",
