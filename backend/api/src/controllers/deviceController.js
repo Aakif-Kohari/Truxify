@@ -187,6 +187,7 @@ export async function unregisterDeviceToken(req, res, next) {
       .from('user_devices')
       .select('fcm_token')
       .eq('user_id', userId)
+      .eq('is_active', true)
       .limit(1)
       .maybeSingle();
 
@@ -281,3 +282,94 @@ export async function getDevicePlatforms(req, res, next) {
     return next(err);
   }
 }
+
+/**
+ * Update GPS location for a user device.
+ */
+export async function updateLocation(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    const { latitude, longitude, heading, speed } = req.body || {};
+
+    if (!userId) {
+      return next(new UnauthorizedError('User not authenticated'));
+    }
+
+    const isLatitudeValid =
+      latitude !== null &&
+      latitude !== undefined &&
+      typeof latitude !== 'boolean' &&
+      latitude !== '' &&
+      Number.isFinite(Number(latitude)) &&
+      Number(latitude) >= -90 &&
+      Number(latitude) <= 90;
+
+    if (!isLatitudeValid) {
+      return res.status(400).json({ error: 'latitude must be a valid number between -90 and 90' });
+    }
+
+    const isLongitudeValid =
+      longitude !== null &&
+      longitude !== undefined &&
+      typeof longitude !== 'boolean' &&
+      longitude !== '' &&
+      Number.isFinite(Number(longitude)) &&
+      Number(longitude) >= -180 &&
+      Number(longitude) <= 180;
+
+    if (!isLongitudeValid) {
+      return res.status(400).json({ error: 'longitude must be a valid number between -180 and 180' });
+    }
+
+    if (!supabaseAdmin) {
+      logger.error('[DeviceController] Service-role client unavailable for updateLocation');
+      return next(new AppError('Failed to update location', 503));
+    }
+
+    const parsedHeading =
+      heading !== null &&
+      heading !== undefined &&
+      typeof heading !== 'boolean' &&
+      heading !== '' &&
+      Number.isFinite(Number(heading))
+        ? Number(heading)
+        : null;
+
+    const parsedSpeed =
+      speed !== null &&
+      speed !== undefined &&
+      typeof speed !== 'boolean' &&
+      speed !== '' &&
+      Number.isFinite(Number(speed))
+        ? Number(speed)
+        : null;
+
+    const { error } = await supabaseAdmin
+      .from('user_locations')
+      .upsert({
+        user_id: userId,
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        heading: parsedHeading,
+        speed: parsedSpeed,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (error) {
+      logger.error('[DeviceController] Failed to update location:', error.message);
+      return next(new AppError('Failed to update location', 500));
+    }
+
+    return res.json({
+      success: true,
+      message: 'Location updated',
+    });
+  } catch (err) {
+    logger.error('[DeviceController] Unexpected error in updateLocation:', err.message);
+    return next(err);
+  }
+}
+
+export const registerDevice = registerDeviceToken;
+export const unregisterDevice = unregisterDeviceToken;
+
