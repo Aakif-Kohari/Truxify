@@ -6,16 +6,55 @@ import { BlockchainMetrics, EscalationHandler } from '../services/blockchain/ind
 
 const router = express.Router();
 
-// Shared service instances. The handlers rely on these being present on the
-// request; nothing else attaches them, so wire them here instead of leaving
-// the endpoints dependent on request properties no middleware sets.
+// Router-local fallback instances — used only when the router is mounted
+// standalone; the index.js /api/blockchain mount attaches the shared
+// singletons to req so these are never clobbered over them.
 const blockchainMetrics = new BlockchainMetrics();
 const escalationHandler = new EscalationHandler();
 
+const resolveSupabaseClient = (req) => req.supabase ?? supabase;
+
+// The index.js mount attaches shared singletons and req.supabase =
+// supabaseAdmin (service-role key, bypasses RLS) so monitoring queries are
+// never limited to the anon client's rows. Only fall back to the router-local
+// instances when nothing else attached them (e.g. standalone/test mounts),
+// so a middleware-attached service is never silently overwritten.
 router.use((req, _res, next) => {
-  req.blockchainMetrics = blockchainMetrics;
-  req.escalationHandler = escalationHandler;
+  req.blockchainMetrics = req.blockchainMetrics || blockchainMetrics;
+  req.escalationHandler = req.escalationHandler || escalationHandler;
+  req.blockchainMetrics ??= blockchainMetrics;
+  req.escalationHandler ??= escalationHandler;
   next();
+});
+
+/**
+ * Get monitor health and block lag
+ * GET /api/blockchain/health
+ */
+router.get('/health', async (req, res) => {
+  try {
+    const monitor = req.blockchainMonitor;
+    if (!monitor) {
+      return res.json({
+        status: 'stopped',
+        running: false,
+        lastScannedBlock: 0,
+        currentChainHead: null,
+        blockLag: null,
+        lastSuccessfulScan: null,
+        lastError: null,
+      });
+    }
+
+    const health = await monitor.getHealth();
+    res.json({
+      timestamp: new Date().toISOString(),
+      ...health,
+    });
+  } catch (err) {
+    logger.error('Error fetching monitor health:', err.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
 /**
@@ -102,6 +141,14 @@ router.get('/events', authenticate, requireRole(['admin', 'support']), async (re
     // Validate event type if provided
     const validTypes = [
       'PAYMENT_RECEIVED',
+      'PAYMENT_RELEASED',
+      'BOOKING_CANCELLED',
+      'BOOKING_STARTED',
+      'BOOKING_DISPUTED',
+      'DISPUTE_RESOLVED',
+      'BOOKING_CREATED',
+      'BLOCKCHAIN_STATE_DIVERGENCE',
+      'SCAN_CHECKPOINT',
       'INSURANCE_CLAIM_APPROVED',
       'INSURANCE_CLAIM_REJECTED',
       'GEOFENCE_BREACH',
@@ -118,7 +165,9 @@ router.get('/events', authenticate, requireRole(['admin', 'support']), async (re
       return res.status(400).json({ error: 'Invalid severity level' });
     }
 
-    let query = supabase
+    const db = req.supabase || supabase;
+    let query = db
+    let query = resolveSupabaseClient(req)
       .from('blockchain_monitoring_events')
       .select('*')
       .order('created_at', { ascending: false })
@@ -163,7 +212,9 @@ router.get('/escalations/:alertId', authenticate, requireRole(['admin', 'support
       return res.status(400).json({ error: 'Invalid alert ID format' });
     }
 
-    const { data: escalation, error } = await supabase
+    const db = req.supabase || supabase;
+    const { data: escalation, error } = await db
+    const { data: escalation, error } = await resolveSupabaseClient(req)
       .from('blockchain_escalations')
       .select('*')
       .eq('alert_id', alertId)

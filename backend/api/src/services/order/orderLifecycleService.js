@@ -38,6 +38,41 @@ import { generateOrderDisplayId, ORDER_DISPLAY_ID_MAX_RETRIES } from '../../lib/
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const ORDER_DETAIL_FIELDS = [
+  'id',
+  'order_display_id',
+  'customer_id',
+  'driver_id',
+  'truck_id',
+  'status',
+  'pickup_address',
+  'pickup_lat',
+  'pickup_lng',
+  'drop_address',
+  'drop_lat',
+  'drop_lng',
+  'pickup_date',
+  'pickup_time',
+  'goods_type',
+  'weight_tonnes',
+  'length_ft',
+  'width_ft',
+  'height_ft',
+  'is_stackable',
+  'is_fragile',
+  'special_requirements',
+  'total_amount',
+  'cancellation_fee',
+  'cancellation_reason',
+  'driver_name',
+  'driver_rating',
+  'truck_number',
+  'eta',
+  'waypoints',
+  'created_at',
+  'updated_at',
+].join(', ');
+
 export class OrderLifecycleService {
   constructor({ orderRepository, orderTimelineService, bidAcceptanceService, deliveryVerificationService, trackingTokenService }) {
     this.orderRepository = orderRepository;
@@ -252,7 +287,7 @@ export class OrderLifecycleService {
 
   async getOrderDetail(orderId, userId) {
     return measureExecution('OrderLifecycleService.getOrderDetail', async () => {
-      const { data: order, error: orderErr } = await this.orderRepository.findOrderByAnyId(orderId, '*');
+      const { data: order, error: orderErr } = await this.orderRepository.findOrderByAnyId(orderId, ORDER_DETAIL_FIELDS);
       if (orderErr) throw new DomainError(500, { error: 'Query failed.', details: orderErr.message });
       if (!order) throw new DomainError(404, { error: 'Order not found.' });
 
@@ -1077,7 +1112,7 @@ export class OrderLifecycleService {
 
   async submitRating(orderId, customerId, stars, comment, userClient) {
     return measureExecution('OrderLifecycleService.submitRating', async () => {
-      const { data: order, error: orderErr } = await this.orderRepository.findOrderById(
+      const { data: order, error: orderErr } = await this.orderRepository.findOrderByAnyId(
         orderId, 'id, order_display_id, customer_id, driver_id, status'
       );
 

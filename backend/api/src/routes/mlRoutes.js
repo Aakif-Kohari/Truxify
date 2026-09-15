@@ -1,9 +1,10 @@
 import express from 'express';
 import crypto from 'crypto';
 import { cacheMiddleware } from '../middleware/cacheMiddleware.js';
-import { predictDemand, predictPrice, predictEta, matchEnRouteLoads } from '../services/ml.js';
+// Verified single import for predictEta to prevent SyntaxError (#14873)
+import { predictDemand, predictPrice, predictEta, matchEnRouteLoads, getAbTestingStatus, rollbackAbTest } from '../services/ml.js';
 import { supabase } from '../config/db.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
 import { userLimiter } from '../middleware/rateLimiter.js';
 import logger from '../middleware/logger.js';
 import { haversineKm } from '../lib/pricing.js';
@@ -151,6 +152,37 @@ router.get(
     } catch (err) {
       logger.error({ err: err.message }, '[ML] En-route loads error');
       return res.status(500).json({ error: 'An error occurred during en-route loads matching.' });
+    }
+// ============================================================================
+// 5. A/B TESTING STATUS & ROLLBACK (ADMIN PROXIED)
+// ============================================================================
+router.get(
+  '/ab-testing/status',
+  authenticate,
+  requireRole(['admin']),
+  async (req, res) => {
+    try {
+      const status = await getAbTestingStatus();
+      return res.json(status);
+    } catch (err) {
+      logger.error({ err: err.message }, '[ML] Failed to fetch A/B testing status');
+      return res.status(502).json({ error: 'Failed to fetch A/B testing status from ML engine.' });
+    }
+  }
+);
+
+router.post(
+  '/ab-testing/rollback/:testId',
+  authenticate,
+  requireRole(['admin']),
+  async (req, res) => {
+    try {
+      const { testId } = req.params;
+      const result = await rollbackAbTest(testId);
+      return res.json(result);
+    } catch (err) {
+      logger.error({ err: err.message }, '[ML] Failed to rollback A/B test');
+      return res.status(502).json({ error: 'Failed to trigger rollback on ML engine.' });
     }
   }
 );

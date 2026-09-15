@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -165,6 +165,7 @@ contract AssetToken is ERC20, ERC20Burnable, Ownable, Pausable, ReentrancyGuard 
         uint256 assetId,
         uint256 amount
     ) external payable nonReentrant whenNotPaused {
+        require(isCompliant[msg.sender], "Buyer not compliant");
         require(assetExists[assetId], "Asset not found");
         Asset storage asset = assets[assetId];
         require(asset.isActive, "Asset not active");
@@ -284,6 +285,7 @@ contract AssetToken is ERC20, ERC20Burnable, Ownable, Pausable, ReentrancyGuard 
         uint256 price,
         string memory orderType
     ) external whenNotPaused {
+        require(isCompliant[msg.sender], "Sender not compliant");
         require(assetExists[assetId], "Asset not found");
         require(amount >= MIN_TRADE_AMOUNT, "Amount too small");
         require(amount <= MAX_TRADE_AMOUNT, "Amount too large");
@@ -332,6 +334,7 @@ contract AssetToken is ERC20, ERC20Burnable, Ownable, Pausable, ReentrancyGuard 
         uint256 assetId,
         uint256 orderIndex
     ) external payable nonReentrant whenNotPaused {
+        require(isCompliant[msg.sender], "Buyer not compliant");
         require(assetExists[assetId], "Asset not found");
         require(orderIndex < tradeOrders[assetId].length, "Order not found");
 
@@ -384,6 +387,7 @@ contract AssetToken is ERC20, ERC20Burnable, Ownable, Pausable, ReentrancyGuard 
         uint256 assetId,
         uint256 orderIndex
     ) external {
+        require(isCompliant[msg.sender], "Seller not compliant");
         require(assetExists[assetId], "Asset not found");
         require(orderIndex < tradeOrders[assetId].length, "Order not found");
 
@@ -428,6 +432,7 @@ contract AssetToken is ERC20, ERC20Burnable, Ownable, Pausable, ReentrancyGuard 
         address to,
         uint256 amount
     ) external whenNotPaused {
+        require(isCompliant[msg.sender], "Sender not compliant");
         require(assetExists[assetId], "Asset not found");
         require(to != address(0), "Invalid recipient");
         require(amount > 0, "Amount must be > 0");

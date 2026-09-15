@@ -1,4 +1,4 @@
-# Shard North
+﻿# Shard North
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,6 +25,13 @@ spec:
       containers:
       - name: postgres
         image: postgis/postgis:15-3.3-alpine
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
         env:
         - name: POSTGRES_USER
           value: postgres
@@ -99,6 +106,13 @@ spec:
       containers:
       - name: postgres
         image: postgis/postgis:15-3.3-alpine
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
         env:
         - name: POSTGRES_USER
           value: postgres
@@ -173,6 +187,13 @@ spec:
       containers:
       - name: postgres
         image: postgis/postgis:15-3.3-alpine
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
         env:
         - name: POSTGRES_USER
           value: postgres
@@ -247,6 +268,13 @@ spec:
       containers:
       - name: postgres
         image: postgis/postgis:15-3.3-alpine
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
         env:
         - name: POSTGRES_USER
           value: postgres
