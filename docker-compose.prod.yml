@@ -234,7 +234,7 @@ services:
   # service uses its own dedicated, least-privilege database instead of the
   # application's `postgres` superuser-equivalent credentials.
   n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    image: docker.n8n.io/n8nio/n8n:2.38.7
     container_name: truxify-n8n
     env_file:
       - .env
