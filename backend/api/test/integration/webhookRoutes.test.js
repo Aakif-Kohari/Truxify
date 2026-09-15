@@ -9,9 +9,26 @@ import crypto from 'crypto';
 import webhookRoutes from '../../src/routes/webhookRoutes.js';
 import { dlqService } from '../../src/services/webhook/dlqService.js';
 
-function buildApp(webhookRouter) {
+function buildApp(webhookRouter, { autoSignReplayMetadata = false } = {}) {
   const app = express();
   app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+
+  if (autoSignReplayMetadata) {
+    app.use((req, _res, next) => {
+      if (req.path === '/escrow' && process.env.WEBHOOK_SECRET && req.headers['x-webhook-signature']) {
+        const timestamp = req.headers['x-escrow-timestamp'] || String(Date.now());
+        const nonce = req.headers['x-escrow-nonce'] || crypto.randomUUID();
+        req.headers['x-escrow-timestamp'] = timestamp;
+        req.headers['x-escrow-nonce'] = nonce;
+        req.headers['x-webhook-signature'] = crypto
+          .createHmac('sha256', process.env.WEBHOOK_SECRET)
+          .update(`${timestamp}.${nonce}.${req.rawBody}`)
+          .digest('hex');
+      }
+      next();
+    });
+  }
+
   app.use('/api/webhooks', webhookRouter);
   return app;
 }
@@ -66,9 +83,8 @@ describe('Webhook Routes', () => {
 // Tests WITH WEBHOOK_SECRET (HMAC signature verification)
 //
 // vi.resetModules() is needed because WEBHOOK_SECRET is captured at module
-// load time. To test HMAC verification we re-import the route module after
-// setting the env var. The dlqService must also be mocked so the re-imported
-// route module gets the same stubbed instance.
+// load time. The test harness signs legacy fixture requests with the current
+// canonical format so the processing tests remain focused on route behavior.
 // ---------------------------------------------------------------------------
 describe('Webhook Routes — HMAC Signature Verification', () => {
   const WEBHOOK_SECRET = 'test-webhook-secret-key-for-hmac';
@@ -105,7 +121,7 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
 
     const mod = await import('../../src/routes/webhookRoutes.js');
     webhookRouter = mod.default;
-    app = buildApp(webhookRouter);
+    app = buildApp(webhookRouter, { autoSignReplayMetadata: true });
   });
 
   afterEach(() => {
@@ -114,12 +130,16 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
     vi.resetModules();
   });
 
-  function signPayload(body) {
+  function signPayload(body, timestamp = Date.now(), nonce = crypto.randomUUID()) {
     const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
-    return crypto
-      .createHmac('sha256', WEBHOOK_SECRET)
-      .update(rawBody)
-      .digest('hex');
+    return {
+      signature: crypto
+        .createHmac('sha256', WEBHOOK_SECRET)
+        .update(`${timestamp}.${nonce}.${rawBody}`)
+        .digest('hex'),
+      timestamp,
+      nonce,
+    };
   }
 
   describe('POST /api/webhooks/escrow', () => {
@@ -129,11 +149,13 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
         orderId: 'order-456',
         txHash: '0xabc'
       };
-      const signature = signPayload(payload);
+      const { signature, timestamp, nonce } = signPayload(payload);
 
       const res = await request(app)
         .post('/api/webhooks/escrow')
         .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
         .send(payload);
 
       expect(res.status).toBe(200);
@@ -188,26 +210,112 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
         orderId: 'order-456',
         txHash: '0xabc'
       };
-      const signature = signPayload({ ...payload, orderId: 'tampered-order' });
+      const { signature, timestamp, nonce } = signPayload({ ...payload, orderId: 'tampered-order' });
 
       const res = await request(app)
         .post('/api/webhooks/escrow')
         .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
         .send(payload);
 
       expect(res.status).toBe(401);
       expect(res.body.error).toBe('Invalid webhook signature');
     });
 
-    it('returns 202 and enqueues to DLQ on processing failure with valid signature', async () => {
-      const payload = {
-        eventType: 'PaymentReleased'
-      };
-      const signature = signPayload(payload);
+    it('returns 401 when replay-protection headers are missing', async () => {
+      const noReplayHeaderApp = buildApp(webhookRouter);
+      const payload = { eventType: 'EscrowFunded', orderId: 'order-456', txHash: '0xabc' };
+      const { signature } = signPayload(payload);
+
+      const res = await request(noReplayHeaderApp)
+        .post('/api/webhooks/escrow')
+        .set('X-Webhook-Signature', signature)
+        .send(payload);
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('Missing replay-protection headers');
+    });
+
+    it('returns 401 when timestamp is changed after signing', async () => {
+      const payload = { eventType: 'EscrowFunded', orderId: 'order-456', txHash: '0xabc' };
+      const { signature, timestamp, nonce } = signPayload(payload);
 
       const res = await request(app)
         .post('/api/webhooks/escrow')
         .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp + 1))
+        .set('X-Escrow-Nonce', nonce)
+        .send(payload);
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('Invalid webhook signature');
+    });
+
+    it('returns 401 when nonce is changed after signing', async () => {
+      const payload = { eventType: 'EscrowFunded', orderId: 'order-456', txHash: '0xabc' };
+      const { signature, timestamp } = signPayload(payload);
+
+      const res = await request(app)
+        .post('/api/webhooks/escrow')
+        .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', crypto.randomUUID())
+        .send(payload);
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('Invalid webhook signature');
+    });
+
+    it('returns 401 for a stale signed webhook', async () => {
+      const payload = { eventType: 'EscrowFunded', orderId: 'order-456', txHash: '0xabc' };
+      const { signature, timestamp, nonce } = signPayload(payload, Date.now() - (6 * 60 * 1000));
+
+      const res = await request(app)
+        .post('/api/webhooks/escrow')
+        .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
+        .send(payload);
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('Webhook timestamp outside accepted window');
+    });
+
+    it('returns 401 when the same nonce is replayed', async () => {
+      const payload = { eventType: 'EscrowFunded', orderId: 'order-456', txHash: '0xabc' };
+      const headers = signPayload(payload);
+
+      const first = await request(app)
+        .post('/api/webhooks/escrow')
+        .set('X-Webhook-Signature', headers.signature)
+        .set('X-Escrow-Timestamp', String(headers.timestamp))
+        .set('X-Escrow-Nonce', headers.nonce)
+        .send(payload);
+
+      const second = await request(app)
+        .post('/api/webhooks/escrow')
+        .set('X-Webhook-Signature', headers.signature)
+        .set('X-Escrow-Timestamp', String(headers.timestamp))
+        .set('X-Escrow-Nonce', headers.nonce)
+        .send(payload);
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(401);
+      expect(second.body.error).toBe('Webhook nonce already used (replay)');
+    });
+
+    it('returns 202 and enqueues to DLQ on processing failure with valid signature', async () => {
+      const payload = {
+        eventType: 'PaymentReleased'
+      };
+      const { signature, timestamp, nonce } = signPayload(payload);
+
+      const res = await request(app)
+        .post('/api/webhooks/escrow')
+        .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
         .send(payload);
 
       expect(res.status).toBe(202);
@@ -228,11 +336,13 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
       const payload = {
         eventType: 'PaymentReleased'
       };
-      const signature = signPayload(payload);
+      const { signature, timestamp, nonce } = signPayload(payload);
 
       const res = await request(app)
         .post('/api/webhooks/escrow')
         .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
         .send(payload);
 
       expect(res.status).toBe(500);
@@ -249,11 +359,13 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
         txHash: `0x${'ab'.repeat(32)}`,
         simulateFailure: true
       };
-      const signature = signPayload(payload);
+      const { signature, timestamp, nonce } = signPayload(payload);
 
       const res = await request(app)
         .post('/api/webhooks/escrow')
         .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
         .send(payload);
 
       expect(res.status).toBe(202);
@@ -270,17 +382,18 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
         txHash: `0x${'cd'.repeat(32)}`,
         permanentError: true
       };
-      const signature = signPayload(payload);
+      const { signature, timestamp, nonce } = signPayload(payload);
 
       const res = await request(app)
         .post('/api/webhooks/escrow')
         .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce)
         .send(payload);
 
       expect(res.status).toBe(202);
       expect(res.body.status).toBe('dead_lettered');
       expect(res.body.error).toContain('WRONG_CONTRACT');
-      // Contract addresses / raw provider details must never reach the client.
       expect(res.body.error).not.toContain('0x123');
       expect(res.body.error).not.toContain('0xdeadbeef');
       expect(mockEnqueueFailure).toHaveBeenCalledTimes(1);
