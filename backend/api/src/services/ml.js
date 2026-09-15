@@ -530,6 +530,40 @@ function _haversineKm(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/**
+ * Fetches A/B testing status from the ML engine.
+ * @returns {Promise<object>}
+ */
+export async function getAbTestingStatus() {
+  guardMlApiKey();
+  const url = `${getBaseUrl()}/ab-testing/status`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getHeaders(),
+    signal: AbortSignal.timeout(ML_HTTP_TIMEOUT_MS),
+  });
+  return handleResponse(response, url, 'GET');
+}
+
+/**
+ * Triggers an A/B test rollback on the ML engine.
+ * @param {string} testId
+ * @returns {Promise<object>}
+ */
+export async function rollbackAbTest(testId) {
+  guardMlApiKey();
+  if (!testId || typeof testId !== 'string') {
+    throw new Error('[ML] Valid testId is required for rollback');
+  }
+  const url = `${getBaseUrl()}/ab-testing/rollback/${encodeURIComponent(testId)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getHeaders(),
+    signal: AbortSignal.timeout(ML_HTTP_TIMEOUT_MS),
+  });
+  return handleResponse(response, url, 'POST');
+}
+
 export const __testing = {
   demandCache,
   priceCache,
