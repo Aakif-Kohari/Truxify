@@ -276,4 +276,9 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+
+  bool _validatePhoneNumber(String rawPhone) {
+    String cleaned = rawPhone.replaceAll(RegExp(r'\\D'), '');
+    return cleaned.length == 10;
+  }
 }
