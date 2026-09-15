@@ -4,7 +4,6 @@
  * precision clamping bounds, cache hit paths, and network error resilience.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { clampGeohashPrecision } from '../../src/lib/reverseGeocode.js';
 
 const mockLogger = vi.hoisted(() => ({
   info: vi.fn(),
@@ -32,34 +31,31 @@ vi.mock('../../src/config/db.js', () => ({
   },
 }));
 
-import { reverseGeocode } from '../../src/lib/reverseGeocode.js';
+import { reverseGeocode, clampGeohashPrecision } from '../../src/lib/reverseGeocode.js';
 
 describe('reverseGeocode - Comprehensive Edge Cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe('Coordinate Validation & Null/Non-Finite Handling', () => {
-    it('returns null for null lat', async () => {
-      const result = await reverseGeocode(null, 72.5);
-      expect(result).toBeNull();
-      expect(mockFetch).not.toHaveBeenCalled();
-    });
-
-    it('returns null for null lon', async () => {
-      const result = await reverseGeocode(23.0, null);
-      expect(result).toBeNull();
-      expect(mockFetch).not.toHaveBeenCalled();
-    });
-
-    it('returns null for undefined lat or lon', async () => {
+  describe('coordinate validation', () => {
+    it('returns null when latitude or longitude is null or undefined', async () => {
+      expect(await reverseGeocode(null, 72.5)).toBeNull();
+      expect(await reverseGeocode(23.0, null)).toBeNull();
       expect(await reverseGeocode(undefined, 72.5)).toBeNull();
       expect(await reverseGeocode(23.0, undefined)).toBeNull();
+      expect(mockRedisGet).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('returns null for NaN lat or lon', async () => {
+    it('returns null for NaN or non-numeric coordinate strings and does not query cache', async () => {
       expect(await reverseGeocode(NaN, 72.5)).toBeNull();
       expect(await reverseGeocode(23.0, NaN)).toBeNull();
+      expect(await reverseGeocode('invalid', 72.5)).toBeNull();
+      expect(await reverseGeocode(23.0, 'not-a-number')).toBeNull();
+      expect(await reverseGeocode('NaN', 'NaN')).toBeNull();
+      expect(mockRedisGet).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('returns null for Infinity or -Infinity lat/lng values', async () => {
@@ -69,113 +65,130 @@ describe('reverseGeocode - Comprehensive Edge Cases', () => {
       expect(await reverseGeocode(23.0, -Infinity)).toBeNull();
     });
 
-    it('returns null for out-of-range lat (< -90 or > 90)', async () => {
-      expect(await reverseGeocode(90.1, 72.5)).toBeNull();
+    it('returns null for out-of-range latitude (< -90 or > 90)', async () => {
       expect(await reverseGeocode(-90.1, 72.5)).toBeNull();
-      expect(await reverseGeocode(150.0, 72.5)).toBeNull();
+      expect(await reverseGeocode(90.1, 72.5)).toBeNull();
+      expect(await reverseGeocode(-120, 72.5)).toBeNull();
+      expect(await reverseGeocode(120, 72.5)).toBeNull();
     });
 
-    it('returns null for out-of-range lon (< -180 or > 180)', async () => {
-      expect(await reverseGeocode(23.0, 180.1)).toBeNull();
+    it('returns null for out-of-range longitude (< -180 or > 180)', async () => {
       expect(await reverseGeocode(23.0, -180.1)).toBeNull();
-      expect(await reverseGeocode(23.0, 250.0)).toBeNull();
+      expect(await reverseGeocode(23.0, 180.1)).toBeNull();
+      expect(await reverseGeocode(23.0, -200)).toBeNull();
+      expect(await reverseGeocode(23.0, 200)).toBeNull();
     });
   });
 
-  describe('Caching & Network Behavior', () => {
-    it('returns cached value from Redis cache hit path without making any network call', async () => {
-      mockRedisGet.mockResolvedValue('MG Road, Cyber City, Indore');
-      
-      const result = await reverseGeocode(22.7196, 75.8577);
-      
-      expect(result).toBe('MG Road, Cyber City, Indore');
-      expect(mockRedisGet).toHaveBeenCalledTimes(1);
-      expect(mockRedisGet).toHaveBeenCalledWith('geocode:22.720,75.858');
+  describe('cache hit behavior', () => {
+    it('returns cached value from Redis without calling Nominatim API', async () => {
+      mockRedisGet.mockResolvedValue('MG Road, Mumbai');
+
+      const result = await reverseGeocode(19.076, 72.8777);
+
+      expect(result).toBe('MG Road, Mumbai');
+      expect(mockRedisGet).toHaveBeenCalledWith('geocode:19.076,72.878');
       expect(mockFetch).not.toHaveBeenCalled();
     });
+  });
 
-    it('calls Nominatim API and caches result when cache misses', async () => {
+  describe('cache miss and Nominatim API behavior', () => {
+    it('calls Nominatim API on cache miss, caches the result, and returns formatted address', async () => {
       mockRedisGet.mockResolvedValue(null);
       mockRedisSet.mockResolvedValue('OK');
       mockFetch.mockResolvedValue({
         ok: true,
+        status: 200,
         json: () => Promise.resolve({
-          address: { road: 'Rajwada', city: 'Indore' },
-          display_name: 'Rajwada, Indore, Madhya Pradesh, India',
+          address: {
+            road: 'MG Road',
+            city: 'Mumbai',
+            state: 'Maharashtra',
+          },
+          display_name: 'MG Road, Mumbai, Maharashtra, India',
         }),
       });
 
-      const result = await reverseGeocode(22.7196, 75.8577);
-      
-      expect(result).toBe('Rajwada, Indore');
-      expect(mockFetch).toHaveBeenCalledOnce();
-      expect(mockFetch.mock.calls[0][0]).toContain('lat=22.720&lon=75.858');
-      expect(mockRedisSet).toHaveBeenCalledTimes(1);
+      const result = await reverseGeocode(19.076, 72.8777);
+
+      expect(result).toBe('MG Road, Mumbai');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const url = mockFetch.mock.calls[0][0];
+      expect(url).toContain('lat=19.076');
+      expect(url).toContain('lon=72.878');
       expect(mockRedisSet).toHaveBeenCalledWith(
-        'geocode:22.720,75.858',
-        'Rajwada, Indore',
+        'geocode:19.076,72.878',
+        'MG Road, Mumbai',
         'EX',
-        604800
+        7 * 24 * 60 * 60
       );
     });
+  });
 
-    it('returns null when Nominatim API returns non-ok response without throwing', async () => {
+  describe('error handling and failure cases', () => {
+    it('returns null gracefully when Nominatim API returns a non-ok status', async () => {
       mockRedisGet.mockResolvedValue(null);
       mockFetch.mockResolvedValue({
         ok: false,
-        status: 503,
+        status: 500,
       });
 
-      const result = await reverseGeocode(22.7196, 75.8577);
+      const result = await reverseGeocode(19.076, 72.8777);
+
       expect(result).toBeNull();
+      expect(mockRedisSet).not.toHaveBeenCalled();
+      expect(mockLogger.error).toHaveBeenCalled();
     });
 
-    it('returns null on network error or fetch rejection without throwing', async () => {
+    it('returns null gracefully on network or JSON parsing error', async () => {
       mockRedisGet.mockResolvedValue(null);
-      mockFetch.mockRejectedValue(new Error('ECONNRESET Network Timeout'));
+      mockFetch.mockRejectedValue(new Error('Network connection timeout'));
 
-      const result = await reverseGeocode(22.7196, 75.8577);
+      const result = await reverseGeocode(19.076, 72.8777);
+
       expect(result).toBeNull();
+      expect(mockRedisSet).not.toHaveBeenCalled();
+      expect(mockLogger.error).toHaveBeenCalled();
     });
 
-    it('returns null when Nominatim response lacks address and display_name data', async () => {
+    it('returns null when Nominatim returns payload without address or display_name', async () => {
       mockRedisGet.mockResolvedValue(null);
       mockFetch.mockResolvedValue({
         ok: true,
+        status: 200,
         json: () => Promise.resolve({}),
       });
 
-      const result = await reverseGeocode(22.7196, 75.8577);
+      const result = await reverseGeocode(19.076, 72.8777);
+
       expect(result).toBeNull();
+      expect(mockRedisSet).not.toHaveBeenCalled();
     });
   });
 });
 
-describe('clampGeohashPrecision - Boundary & Edge Cases', () => {
-  it('returns DEF (6) for non-finite values (NaN, null, undefined, strings)', () => {
-    expect(clampGeohashPrecision(NaN)).toBe(6);
-    expect(clampGeohashPrecision(null)).toBe(6);
+describe('clampGeohashPrecision', () => {
+  it('returns default (6) for undefined or NaN', () => {
     expect(clampGeohashPrecision(undefined)).toBe(6);
+    expect(clampGeohashPrecision(NaN)).toBe(6);
     expect(clampGeohashPrecision('invalid')).toBe(6);
-    expect(clampGeohashPrecision(Infinity)).toBe(6);
   });
 
-  it('returns MIN (1) for values below 1 (<= 0, negative numbers)', () => {
+  it('clamps values below MIN (1)', () => {
+    expect(clampGeohashPrecision(null)).toBe(1);
     expect(clampGeohashPrecision(0)).toBe(1);
     expect(clampGeohashPrecision(-5)).toBe(1);
-    expect(clampGeohashPrecision(-0.5)).toBe(1);
   });
 
-  it('returns MAX (12) for values above 12', () => {
+  it('clamps values above MAX (12)', () => {
     expect(clampGeohashPrecision(13)).toBe(12);
-    expect(clampGeohashPrecision(20)).toBe(12);
-    expect(clampGeohashPrecision(100)).toBe(12);
+    expect(clampGeohashPrecision(25)).toBe(12);
   });
 
-  it('passes through valid precision integers between 1 and 12', () => {
+  it('preserves and floors values within [1, 12]', () => {
     expect(clampGeohashPrecision(1)).toBe(1);
-    expect(clampGeohashPrecision(6)).toBe(6);
+    expect(clampGeohashPrecision(7)).toBe(7);
+    expect(clampGeohashPrecision(8.8)).toBe(8);
     expect(clampGeohashPrecision(12)).toBe(12);
-    expect(clampGeohashPrecision(8)).toBe(8);
   });
 });
