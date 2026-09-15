@@ -262,8 +262,26 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  bool _validatePhoneNumber(String rawPhone) {
-    String cleaned = rawPhone.replaceAll(RegExp(r'\\D'), '');
-    return cleaned.length == 10;
+  
+
+  String? _validateAndGetCleanedPhone(TextEditingController controller) {
+    String raw = controller.text.trim();
+    String cleaned = raw.replaceAll(RegExp(r'\\D'), '');
+
+    if (cleaned.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a phone number')),
+      );
+      return null;
+    }
+
+    if (cleaned.length != 10 || !RegExp(r'^[0-9]{10}$').hasMatch(cleaned)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid 10-digit phone number')),
+      );
+      return null;
+    }
+
+    return cleaned;
   }
 }
