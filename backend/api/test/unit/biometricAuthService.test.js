@@ -3,17 +3,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
     createChallenge,
+    getChallenge,
     verifyBiometric,
 } from '../../src/services/biometricAuthService.js';
 
 const FALLBACK_SECRET = 'truxify-biometric-secret';
 const CONFIGURED_SECRET = 'test-biometric-secret';
 
-function createBiometricToken(challenge, secret, method = 'fingerprint') {
+function createBiometricToken(session, secret, method = 'fingerprint') {
     const timestamp = Date.now();
     const payload = {
-        userId: challenge.userId,
-        nonce: challenge.nonce,
+        userId: session.userId,
+        nonce: session.nonce,
         method,
         timestamp,
     };
@@ -44,7 +45,8 @@ describe('biometricAuthService', () => {
 
     it('rejects biometric proofs when no app secret is configured', () => {
         const challenge = createChallenge('user-1', 'shipment-1', 5_000_000);
-        const token = createBiometricToken(challenge, FALLBACK_SECRET);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, FALLBACK_SECRET);
 
         const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
 
@@ -56,7 +58,8 @@ describe('biometricAuthService', () => {
 
     it('rejects the historical public fallback secret when configuration is missing', () => {
         const challenge = createChallenge('user-2', 'shipment-2', 5_000_000);
-        const token = createBiometricToken(challenge, FALLBACK_SECRET);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, FALLBACK_SECRET);
 
         const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
 
@@ -69,7 +72,8 @@ describe('biometricAuthService', () => {
         process.env.BIOMETRIC_APP_SECRET = CONFIGURED_SECRET;
 
         const challenge = createChallenge('user-3', 'shipment-3', 5_000_000);
-        const token = createBiometricToken(challenge, CONFIGURED_SECRET);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, CONFIGURED_SECRET);
 
         const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
 
@@ -82,7 +86,8 @@ describe('biometricAuthService', () => {
         process.env.BIOMETRIC_APP_SECRET = CONFIGURED_SECRET;
 
         const challenge = createChallenge('user-4', 'shipment-4', 5_000_000);
-        const token = createBiometricToken(challenge, 'wrong-secret');
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, 'wrong-secret');
 
         const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
 
@@ -96,7 +101,8 @@ describe('biometricAuthService', () => {
         process.env.BIOMETRIC_APP_SECRET = '   ';
 
         const challenge = createChallenge('user-5', 'shipment-5', 5_000_000);
-        const token = createBiometricToken(challenge, FALLBACK_SECRET);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, FALLBACK_SECRET);
 
         const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
 
