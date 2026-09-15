@@ -299,4 +299,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return cleaned;
   }
+
+  // Triggered on Send OTP click with full 10-digit validation & sanitization (#228)
+  void handleOtpRequest(TextEditingController controller) {
+    final String? cleanedPhone = _validateAndGetCleanedPhone(controller);
+    if (cleanedPhone == null) return;
+    // Proceed with cleanedPhone for OTP generation / API request
+  }
 }
