@@ -3,12 +3,7 @@ const osrmService = require('../services/osrmService');
 const getRoute = async (req, res) => {
     try {
         const { startLon, startLat, endLon, endLat } = req.query;
-        const rawCoordinates = [startLon, startLat, endLon, endLat].map(value => {
-            if (typeof value === 'string') {
-                return value.trim();
-            }
-            return value;
-        });
+        const rawCoordinates = [startLon, startLat, endLon, endLat];
 
         if (rawCoordinates.some(value => value === undefined || value === null || value === '')) {
             return res.status(400).json({
@@ -17,7 +12,23 @@ const getRoute = async (req, res) => {
             });
         }
 
-        const parsedCoordinates = rawCoordinates.map(Number);
+        if (rawCoordinates.some(value => typeof value !== 'string')) {
+            return res.status(400).json({
+                error: 'Invalid coordinates',
+                message: 'Coordinates must be provided as scalar values'
+            });
+        }
+
+        const trimmedCoordinates = rawCoordinates.map(value => value.trim());
+
+        if (trimmedCoordinates.some(value => value === '')) {
+            return res.status(400).json({
+                error: 'Missing coordinates',
+                message: 'startLon, startLat, endLon, and endLat are required'
+            });
+        }
+
+        const parsedCoordinates = trimmedCoordinates.map(Number);
 
         if (parsedCoordinates.some(value => !Number.isFinite(value))) {
             return res.status(400).json({
