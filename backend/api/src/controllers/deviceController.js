@@ -195,6 +195,7 @@ export async function unregisterDeviceToken(req, res, next) {
       .from('user_devices')
       .select('fcm_token')
       .eq('user_id', userId)
+      .eq('is_active', true)
       .limit(1)
       .maybeSingle();
 

@@ -625,6 +625,8 @@ router.get('/driver/statement', authenticate, requirePolicy('profile:view-statem
       tripsList.sort((a, b) => (b.net_earnings - a.net_earnings) || new Date(b.pickup_date) - new Date(a.pickup_date));
     } else if (sort_by === 'base_freight') {
       tripsList.sort((a, b) => (b.base_freight - a.base_freight) || new Date(b.pickup_date) - new Date(a.pickup_date));
+    } else if (sort_by === 'pickup_date') {
+      tripsList.sort((a, b) => new Date(b.pickup_date) - new Date(a.pickup_date));
     }
 
     if (format === 'csv') {

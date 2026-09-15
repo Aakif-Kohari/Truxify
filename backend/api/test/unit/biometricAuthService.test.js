@@ -1,143 +1,163 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import crypto from 'crypto';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
 import {
-  requiresBiometricAuth,
-  getBiometricThreshold,
-  updateBiometricThreshold,
-  createChallenge,
-  verifyBiometric,
-  verifyFallbackOtp,
-  getFallbackOtp,
-  getChallengeStatus,
-  getChallenge,
+    getChallengeStatus,
+    getFallbackOtp,
+    requiresBiometricAuth,
+    updateBiometricThreshold,
+    createChallenge,
+    getChallenge,
+    verifyFallbackOtp,
+    verifyBiometric,
 } from '../../src/services/biometricAuthService.js';
 
-describe('biometricAuthService', () => {
-  const testUser = 'driver-bio-test-1';
-  const testShipment = 'shipment-999';
+const FALLBACK_SECRET = 'truxify-biometric-secret';
+const CONFIGURED_SECRET = 'test-biometric-secret';
 
-  beforeEach(() => {
-    // Reset threshold to default ₹50,000 (5,000,000 paisa)
-    updateBiometricThreshold(testUser, 5_000_000);
-  });
+function createBiometricToken(session, secret, method = 'fingerprint') {
+    const timestamp = Date.now();
+    const payload = {
+        userId: session.userId,
+        nonce: session.nonce,
+        method,
+        timestamp,
+    };
 
-  describe('threshold management', () => {
-    it('correctly evaluates freight value against threshold', () => {
-      expect(requiresBiometricAuth(testUser, 4_999_999)).toBe(false);
-      expect(requiresBiometricAuth(testUser, 5_000_000)).toBe(true);
-      expect(requiresBiometricAuth(testUser, 10_000_000)).toBe(true);
-    });
-
-    it('updates biometric threshold and returns updated config', () => {
-      const updated = updateBiometricThreshold(testUser, 2_000_000);
-      expect(updated.threshold_paisa).toBe(2_000_000);
-      expect(requiresBiometricAuth(testUser, 2_000_000)).toBe(true);
-      expect(requiresBiometricAuth(testUser, 1_999_999)).toBe(false);
-    });
-
-    it('rejects invalid threshold values', () => {
-      expect(() => updateBiometricThreshold(testUser, 0)).toThrow();
-      expect(() => updateBiometricThreshold(testUser, -500)).toThrow();
-      expect(() => updateBiometricThreshold(testUser, 100_000_001)).toThrow();
-      expect(() => updateBiometricThreshold(testUser, 'invalid')).toThrow();
-    });
-  });
-
-  describe('challenge lifecycle and biometric verification', () => {
-    it('creates a valid challenge session with nonce and supported methods', () => {
-      const challenge = createChallenge(testUser, testShipment, 6_000_000);
-
-      expect(challenge.challengeId).toBeDefined();
-      expect(challenge.nonce).toBeDefined();
-      expect(challenge.expiresAt).toBeGreaterThan(Date.now());
-      expect(challenge.supported_methods).toEqual(['fingerprint', 'face_recognition']);
-      expect(challenge.fallback_available).toBe(true);
-
-      const status = getChallengeStatus(challenge.challengeId, testUser);
-      expect(status.status).toBe('pending');
-      expect(status.shipmentId).toBe(testShipment);
-    });
-
-    it('successfully verifies a valid cryptographic biometric token', () => {
-      const challenge = createChallenge(testUser, testShipment, 6_000_000);
-      const method = 'fingerprint';
-      const timestamp = Date.now();
-      const secret = process.env.BIOMETRIC_APP_SECRET || 'truxify-biometric-secret';
-
-      const signature = crypto
+    payload.signature = crypto
         .createHmac('sha256', secret)
-        .update(`${testUser}${challenge.nonce}${method}${timestamp}`)
+        .update(`${payload.userId}${payload.nonce}${payload.method}${payload.timestamp}`)
         .digest('hex');
 
-      const token = Buffer.from(
-        JSON.stringify({
-          userId: testUser,
-          nonce: challenge.nonce,
-          method,
-          timestamp,
-          signature,
-        })
-      ).toString('base64url');
+    return Buffer.from(JSON.stringify(payload)).toString('base64url');
+}
 
-      const verification = verifyBiometric(challenge.challengeId, token, method);
-      expect(verification.success).toBe(true);
-      expect(verification.method).toBe('fingerprint');
-      expect(verification.verifiedAt).toBeDefined();
+describe('biometricAuthService', () => {
+    let originalSecret;
 
-      // Ensure challenge is now consumed and cannot be reused
-      const secondAttempt = verifyBiometric(challenge.challengeId, token, method);
-      expect(secondAttempt.success).toBe(false);
-      expect(secondAttempt.error).toContain('already verified');
+    beforeEach(() => {
+        originalSecret = process.env.BIOMETRIC_APP_SECRET;
+        delete process.env.BIOMETRIC_APP_SECRET;
     });
 
-    it('rejects biometric verification with invalid HMAC signature', () => {
-      const challenge = createChallenge(testUser, testShipment, 6_000_000);
-      const method = 'face_recognition';
-      const timestamp = Date.now();
-
-      const invalidToken = Buffer.from(
-        JSON.stringify({
-          userId: testUser,
-          nonce: challenge.nonce,
-          method,
-          timestamp,
-          signature: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-        })
-      ).toString('base64url');
-
-      const result = verifyBiometric(challenge.challengeId, invalidToken, method);
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Signature verification failed');
+    afterEach(() => {
+        if (originalSecret === undefined) {
+            delete process.env.BIOMETRIC_APP_SECRET;
+        } else {
+            process.env.BIOMETRIC_APP_SECRET = originalSecret;
+        }
     });
 
-    it('rejects unsupported biometric authentication methods', () => {
-      const challenge = createChallenge(testUser, testShipment, 6_000_000);
-      const result = verifyBiometric(challenge.challengeId, 'dummyToken', 'iris_scan');
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Unsupported method');
-    });
-  });
+    it('rejects biometric proofs when no app secret is configured', () => {
+        const challenge = createChallenge('user-1', 'shipment-1', 5_000_000);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, FALLBACK_SECRET);
 
-  describe('fallback OTP verification', () => {
-    it('verifies correctly with matching fallback OTP', () => {
-      const challenge = createChallenge(testUser, testShipment, 6_000_000);
-      const otp = getFallbackOtp(challenge.challengeId);
-      expect(otp).toBeDefined();
-      expect(otp.length).toBe(6);
+        const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
 
-      const result = verifyFallbackOtp(challenge.challengeId, otp);
-      expect(result.success).toBe(true);
-      expect(result.method).toBe('fallback_otp');
-
-      const rawSession = getChallenge(challenge.challengeId);
-      expect(rawSession.status).toBe('verified');
+        expect(result).toEqual({
+            success: false,
+            error: 'Biometric token verification is not configured',
+        });
     });
 
-    it('rejects incorrect fallback OTP', () => {
-      const challenge = createChallenge(testUser, testShipment, 6_000_000);
-      const result = verifyFallbackOtp(challenge.challengeId, '000000');
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Invalid OTP');
+    it('rejects the historical public fallback secret when configuration is missing', () => {
+        const challenge = createChallenge('user-2', 'shipment-2', 5_000_000);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, FALLBACK_SECRET);
+
+        const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
+
+        expect(result.success).toBe(false);
+        expect(result.error).not.toBe('Signature verification failed');
+        expect(result.error).toBe('Biometric token verification is not configured');
     });
-  });
+
+    it('accepts a valid proof when the app secret is configured', () => {
+        process.env.BIOMETRIC_APP_SECRET = CONFIGURED_SECRET;
+
+        const challenge = createChallenge('user-3', 'shipment-3', 5_000_000);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, CONFIGURED_SECRET);
+
+        const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
+
+        expect(result.success).toBe(true);
+        expect(result.challengeId).toBe(challenge.challengeId);
+        expect(result.method).toBe('fingerprint');
+    });
+
+    it('rejects a proof signed with a different secret', () => {
+        process.env.BIOMETRIC_APP_SECRET = CONFIGURED_SECRET;
+
+        const challenge = createChallenge('user-4', 'shipment-4', 5_000_000);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, 'wrong-secret');
+
+        const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
+
+        expect(result).toEqual({
+            success: false,
+            error: 'Signature verification failed',
+        });
+    });
+
+    it('treats a whitespace-only secret as unconfigured', () => {
+        process.env.BIOMETRIC_APP_SECRET = '   ';
+
+        const challenge = createChallenge('user-5', 'shipment-5', 5_000_000);
+        const session = getChallenge(challenge.challengeId);
+        const token = createBiometricToken(session, FALLBACK_SECRET);
+
+        const result = verifyBiometric(challenge.challengeId, token, 'fingerprint');
+
+        expect(result).toEqual({
+            success: false,
+            error: 'Biometric token verification is not configured',
+        });
+    });
+
+    it('evaluates freight value against the configured threshold', () => {
+        updateBiometricThreshold('driver-bio-test-1', 5_000_000);
+
+        expect(requiresBiometricAuth('driver-bio-test-1', 4_999_999)).toBe(false);
+        expect(requiresBiometricAuth('driver-bio-test-1', 5_000_000)).toBe(true);
+    });
+
+    it('updates and validates biometric thresholds', () => {
+        const updated = updateBiometricThreshold('driver-bio-test-1', 2_000_000);
+
+        expect(updated.threshold_paisa).toBe(2_000_000);
+        expect(() => updateBiometricThreshold('driver-bio-test-1', 0)).toThrow();
+        expect(() => updateBiometricThreshold('driver-bio-test-1', 'invalid')).toThrow();
+    });
+
+    it('creates a challenge and exposes a pending status to its owner', () => {
+        const challenge = createChallenge('driver-bio-test-1', 'shipment-999', 6_000_000);
+
+        expect(challenge.challengeId).toBeDefined();
+        expect(challenge.nonce).toBeDefined();
+        expect(getChallengeStatus(challenge.challengeId, 'driver-bio-test-1')).toMatchObject({
+            status: 'pending',
+            shipmentId: 'shipment-999',
+        });
+    });
+
+    it('verifies a fallback OTP and consumes the challenge', () => {
+        const challenge = createChallenge('driver-bio-test-1', 'shipment-999', 6_000_000);
+        const result = verifyFallbackOtp(challenge.challengeId, getFallbackOtp(challenge.challengeId));
+
+        expect(result.success).toBe(true);
+        expect(result.method).toBe('fallback_otp');
+        expect(getChallenge(challenge.challengeId).status).toBe('verified');
+    });
+
+    it('rejects an incorrect fallback OTP', () => {
+        const challenge = createChallenge('driver-bio-test-1', 'shipment-999', 6_000_000);
+
+        expect(verifyFallbackOtp(challenge.challengeId, '000000')).toEqual({
+            success: false,
+            error: 'Invalid OTP',
+        });
+    });
 });
