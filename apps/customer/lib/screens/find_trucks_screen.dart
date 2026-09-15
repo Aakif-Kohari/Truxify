@@ -322,30 +322,34 @@ class _FindTrucksScreenState extends State<FindTrucksScreen> {
         parsed.time.minute,
       );
     }
+    final resolvedGoodsType = _goodsType == 'Other'
+        ? _customGoodsTypeController.text.trim()
+        : _goodsType.trim();
+
     return RouteDraft(
-      pickup: _pickupController.text,
-      drop: _dropController.text,
-      dateLabel: _composeDateTimeLabel(),
-      goodsType: _goodsType,
-      weightTonnes: _weightController.text,
-      dimensions: '${_lengthController.text} × ${_widthController.text} × ${_heightController.text}',
+      pickup: _pickupController.text.trim(),
+      drop: _dropController.text.trim(),
+      dateLabel: _composeDateTimeLabel().trim(),
+      goodsType: resolvedGoodsType,
+      weightTonnes: _weightController.text.trim(),
+      dimensions: '${_lengthController.text.trim()} × ${_widthController.text.trim()} × ${_heightController.text.trim()}',
       stacked: _stacked,
       fragile: _fragile,
-      requirements: _requirements.toList(),
+      requirements: _requirements.map((r) => r.trim()).toList(),
       pickupDate: pickupDate,
       pickupLat: _pickupPoint?.latitude,
       pickupLng: _pickupPoint?.longitude,
       dropLat: _dropPoint?.latitude,
       dropLng: _dropPoint?.longitude,
-      truckType: _filterTruckType != 'Any' ? _filterTruckType : null,
-      selectedTruckTypes: _selectedFilterTruckTypes.isNotEmpty ? _selectedFilterTruckTypes.toList() : null,
-      selectedCargoCategories: _selectedFilterCargoCategories.isNotEmpty ? _selectedFilterCargoCategories.toList() : null,
+      truckType: _filterTruckType != 'Any' ? _filterTruckType.trim() : null,
+      selectedTruckTypes: _selectedFilterTruckTypes.isNotEmpty ? _selectedFilterTruckTypes.map((t) => t.trim()).toList() : null,
+      selectedCargoCategories: _selectedFilterCargoCategories.isNotEmpty ? _selectedFilterCargoCategories.map((c) => c.trim()).toList() : null,
       minCapacity: _filterMinCapacity > 0 ? _filterMinCapacity : null,
       maxCapacity: _filterMaxCapacity < 25 ? _filterMaxCapacity : null,
-      materialType: _filterMaterialType != 'Any' ? _filterMaterialType : null,
+      materialType: _filterMaterialType != 'Any' ? _filterMaterialType.trim() : null,
       requiresRefrigeration: _requirements.contains('Temperature control'),
-      targetTemperatureMin: double.tryParse(_tempMinController.text),
-      targetTemperatureMax: double.tryParse(_tempMaxController.text),
+      targetTemperatureMin: double.tryParse(_tempMinController.text.trim()),
+      targetTemperatureMax: double.tryParse(_tempMaxController.text.trim()),
     );
   }
 

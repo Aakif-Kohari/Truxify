@@ -1,4 +1,4 @@
-import axios from 'axios';
+﻿import axios from 'axios';
 import crypto from 'crypto';
 import { ethers } from 'ethers';
 import { supabase, supabaseAdmin } from '../config/db.js';
@@ -118,7 +118,7 @@ class DigilockerService {
         };
       } catch (err) {
         logger.error({ err }, '[DigilockerService] OAuth exchange failed');
-        return { success: false, error: err.message };
+        return { success: false, error: (err?.message ?? String(err)) };
       }
     }
 
@@ -185,7 +185,7 @@ class DigilockerService {
         logger.info(`[DigilockerService] Smart contract write succeeded. TX hash: ${tx.hash}`);
       } catch (err) {
         logger.error({ err }, '[DigilockerService] Smart contract write failed');
-        throw new Error(`On-chain document hash write failed: ${err.message}`, { cause: err });
+        throw new Error(`On-chain document hash write failed: ${(err?.message ?? String(err))}`, { cause: err });
       }
     } else {
       logger.info(`[DigilockerService] KYC verifier contract address/private key not set. Mocking on-chain hash submission.`);
@@ -236,7 +236,7 @@ class DigilockerService {
         tokenData = tokenResponse.data;
       } catch (err) {
         logger.error({ err }, 'Digilocker token exchange failed');
-        throw new Error('Digilocker token exchange failed: ' + err.message, { cause: err });
+        throw new Error('Digilocker token exchange failed: ' + (err?.message ?? String(err)), { cause: err });
       }
     }
 
@@ -283,7 +283,7 @@ class DigilockerService {
         }
       } catch (err) {
         logger.error({ err }, 'Failed to fetch DigiLocker documents');
-        throw new Error('Failed to fetch DigiLocker documents: ' + err.message, { cause: err });
+        throw new Error('Failed to fetch DigiLocker documents: ' + (err?.message ?? String(err)), { cause: err });
       }
     }
 

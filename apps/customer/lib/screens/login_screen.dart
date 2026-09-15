@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/mock_data.dart';
 import '../theme/app_theme.dart';
@@ -22,23 +24,14 @@ class _LoginScreenState extends State<LoginScreen> {
   final List<TextEditingController> _otpControllers =
       List.generate(4, (_) => TextEditingController());
   final List<FocusNode> _otpFocusNodes = List.generate(4, (_) => FocusNode());
+  final LocalAuthentication _localAuth = LocalAuthentication();
   bool _showOtp = false;
-
-  @override
-  void dispose() {
-    _phoneController.dispose();
-    for (final controller in _otpControllers) {
-      controller.dispose();
-    }
-    for (final node in _otpFocusNodes) {
-      node.dispose();
-    }
-    super.dispose();
-  }
 
   @override
   void initState() {
     super.initState();
+    _checkExistingSessionAndBiometrics();
+    
     for (int i = 0; i < 4; i++) {
       final index = i;
       _otpFocusNodes[index].onKeyEvent = (node, event) {
@@ -55,7 +48,63 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-    void _sendOtp() {
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    for (final controller in _otpControllers) {
+      controller.dispose();
+    }
+    for (final node in _otpFocusNodes) {
+      node.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _checkExistingSessionAndBiometrics() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final bool hasSession = prefs.getBool('is_authenticated') ?? false;
+
+    if (hasSession) {
+      final bool canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics ||
+          await _localAuth.isDeviceSupported();
+          if (!mounted) return;
+      if (canAuthenticateWithBiometrics) {
+        await _authenticateWithBiometrics();
+      }
+    }
+  }
+
+  Future<void> _authenticateWithBiometrics() async {
+    try {
+      final bool authenticated = await _localAuth.authenticate(
+        localizedReason: 'Authenticate to access your freight account',
+        options: const AuthenticationOptions(stickyAuth: true, biometricOnly: true),
+      );
+
+      if (authenticated) {
+        if (!mounted) return;
+
+        final prefs = await SharedPreferences.getInstance();
+        if (!mounted) return;
+        final bool hasSession = prefs.getBool('is_authenticated') ?? false;
+
+        if (hasSession) {
+          _navigateToShell();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No active session found. Please log in using OTP first.'),
+            ),
+          );
+        }
+      }
+    } catch (_) {
+      // Gracefully fall back to standard OTP form if biometrics are cancelled/fail
+    }
+  }
+
+  void _sendOtp() {
     FocusScope.of(context).unfocus();
     final String? cleanedPhone = _validateAndGetCleanedPhone(_phoneController);
     if (cleanedPhone == null) {
@@ -65,16 +114,26 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _showOtp = true);
   }
 
-  void _verifyOtp() {
+  Future<void> _verifyOtp() async {
     final otp = _otpControllers.map((controller) => controller.text).join();
     if (otp == mockOtp) {
-      Navigator.of(context).pushReplacement(
-          AppPageRoute(builder: (_) => const TruxifyShellScreen()));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('is_authenticated', true);
+      if (!mounted) return;
+      if (mounted) {
+        _navigateToShell();
+      }
       return;
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Use mock OTP 1234 to continue.')),
+    );
+  }
+
+  void _navigateToShell() {
+    Navigator.of(context).pushReplacement(
+      AppPageRoute(builder: (_) => const TruxifyShellScreen()),
     );
   }
 
@@ -156,16 +215,28 @@ class _LoginScreenState extends State<LoginScreen> {
                   right: BorderSide(color: borderColor),
                 ),
               ),
-              child: Text('+91',
-                  style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontWeight: FontWeight.w700)),
+              child: Text(
+                '+91',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
             hintText: '9876543210',
           ),
         ),
         const SizedBox(height: 18),
         PrimaryButton(label: 'Send OTP', onPressed: _sendOtp),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _authenticateWithBiometrics,
+          icon: const Icon(Icons.fingerprint),
+          label: const Text('Login with Biometrics'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
+        ),
         const SizedBox(height: 18),
         InfoCard(
           child: Row(
@@ -241,29 +312,25 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  
-
-  
-
   // Validates phone number, manages SnackBar alerts, and extracts clean 10-digit format
   String? _validateAndGetCleanedPhone(TextEditingController controller) {
     String raw = controller.text.trim();
-    String cleaned = raw.replaceAll(RegExp(r"\\D"), "");
+    String cleaned = raw.replaceAll(RegExp(r'\\D'), '');
 
     if (cleaned.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Please enter a phone number"),
+          content: Text('Please enter a phone number'),
           behavior: SnackBarBehavior.floating,
         ),
       );
       return null;
     }
 
-    if (cleaned.length != 10 || !RegExp(r"^[0-9]{10}$").hasMatch(cleaned)) {
+    if (cleaned.length != 10 || !RegExp(r'^[0-9]{10}$').hasMatch(cleaned)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Please enter a valid 10-digit phone number"),
+          content: Text('Please enter a valid 10-digit phone number'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -279,7 +346,6 @@ class _LoginScreenState extends State<LoginScreen> {
     if (cleanedPhone == null) {
       return;
     }
-    debugPrint("[LoginScreen] Phone validation passed.");
+    debugPrint('[LoginScreen] Phone validation passed.');
   }
-
 }
