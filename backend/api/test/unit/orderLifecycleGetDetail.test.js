@@ -123,7 +123,7 @@ describe('OrderLifecycleService.getOrderDetail', () => {
       'updated_at',
     ]));
     expect(selectedFields).not.toContain('*');
-    expect(selectedFields).not.toEqual(expect.arrayContaining([
+    const sensitiveFields = [
       'delivery_otp',
       'upi_id',
       'payment_method_id',
@@ -134,6 +134,9 @@ describe('OrderLifecycleService.getOrderDetail', () => {
       'escrow_release_attempts',
       'release_tx_hash',
       'refund_tx_hash',
-    ]));
+    ];
+    for (const sensitiveField of sensitiveFields) {
+      expect(selectedFields).not.toContain(sensitiveField);
+    }
   });
 });
