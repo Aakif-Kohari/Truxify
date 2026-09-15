@@ -252,7 +252,7 @@ export class OrderLifecycleService {
     return measureExecution('OrderLifecycleService.getOrderHistory', async () => {
       const { data: history, error, count } = await this.orderRepository.findOrdersWithCount(
         customerId,
-        'id, order_display_id, status, pickup_address, drop_address, pickup_date, total_amount, goods_type, driver_id, eta, truck_number, created_at',
+        'id, order_display_id, status, pickup_address, pickup_lat, pickup_lng, drop_address, drop_lat, drop_lng, pickup_date, total_amount, goods_type, weight_tonnes, length_ft, width_ft, height_ft, is_stackable, is_fragile, special_requirements, driver_id, eta, truck_number, created_at',
         { page, limit }
       );
 
@@ -1051,18 +1051,18 @@ export class OrderLifecycleService {
             '[confirm-deposit] DB update failed:',
             updateErr?.message ?? 'escrow-status guard rejected the update'
           );
-        const { error: updateErr } = await this.orderRepository.updateOrder(orderId, {
-          escrow_status: 'funded',
-        });
+          const { error: fallbackErr } = await this.orderRepository.updateOrder(orderId, {
+            escrow_status: 'funded',
+          });
 
-      if (updateErr) {
-        logger.error('[confirm-deposit] DB update failed:', updateErr.message);
-        throw new DomainError(500, { error: 'Database update failed after deposit confirmation. Please contact support.' });
-      }
-    }
+          if (fallbackErr) {
+            logger.error('[confirm-deposit] Fallback DB update failed:', fallbackErr.message);
+            throw new DomainError(500, { error: 'Database update failed after deposit confirmation. Please contact support.' });
+          }
+        }
 
-    // Two-phase acceptance (#5724): finalize the driver assignment now that
-    // the escrow deposit is confirmed.
+        // Two-phase acceptance (#5724): finalize the driver assignment now that
+        // the escrow deposit is confirmed.
         const pending = order.pending_bid_acceptance;
         if (pending) {
           const { error: acceptErr } = await this.orderRepository.executeRpc('accept_bid_tx', {

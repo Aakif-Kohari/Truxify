@@ -293,8 +293,6 @@ services:
   clamav:
     image: clamav/clamav:1.4
     container_name: truxify-clamav
-    ports:
-      - "${CLAMAV_PORT:-3310}:3310"
     volumes:
       - clamav_data:/var/lib/clamav
     deploy:

@@ -177,7 +177,8 @@ router.get('/events', authenticate, requireRole(['admin', 'support']), async (re
       return res.status(400).json({ error: 'Invalid severity level' });
     }
 
-    let query = resolveSupabaseClient(req)
+    const db = resolveSupabaseClient(req) || req.supabase || supabase;
+    let query = db
       .from('blockchain_monitoring_events')
       .select('*')
       .order('created_at', { ascending: false })
@@ -228,7 +229,8 @@ router.get('/escalations/:alertId', authenticate, requireRole(['admin', 'support
       return res.status(400).json({ error: 'Invalid alert ID format' });
     }
 
-    const { data: escalation, error } = await resolveSupabaseClient(req)
+    const db = resolveSupabaseClient(req) || req.supabase || supabase;
+    const { data: escalation, error } = await db
       .from('blockchain_escalations')
       .select('*')
       .eq('alert_id', alertId)
