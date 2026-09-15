@@ -2,15 +2,19 @@ import express from 'express';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import logger from '../middleware/logger.js';
 import { supabase } from '../config/db.js';
-import { BlockchainMetrics, EscalationHandler } from '../services/blockchain/index.js';
+import {
+  BlockchainMetrics,
+  EscalationHandler,
+  defaultBlockchainMetrics,
+  defaultEscalationHandler,
+} from '../services/blockchain/index.js';
 
 const router = express.Router();
 
-// Router-local fallback instances — used only when the router is mounted
-// standalone; the index.js /api/blockchain mount attaches the shared
-// singletons to req so these are never clobbered over them.
-const blockchainMetrics = new BlockchainMetrics();
-const escalationHandler = new EscalationHandler();
+// Canonical shared singleton fallback instances — ensure in-memory state
+// (escalation timers, alert maps) remains uniform across requests and tests.
+const blockchainMetrics = defaultBlockchainMetrics;
+const escalationHandler = defaultEscalationHandler;
 
 const resolveSupabaseClient = (req) => req.supabase ?? supabase;
 
