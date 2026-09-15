@@ -37,8 +37,8 @@ Ensure you have the following secrets ready before deployment:
   ```
 * **Kubernetes:** Use Kubernetes Secrets or a tool like HashiCorp Vault / External Secrets Operator.
   ```bash
-  kubectl create secret generic truxify-secrets \\
-    --from-literal=DATABASE_URL="your-database-url" \\
+  kubectl create secret generic truxify-secrets \
+    --from-literal=DATABASE_URL="your-database-url" \
     --from-literal=REDIS_URL="your-redis-url"
   ```
 
@@ -57,7 +57,7 @@ version: '3.8'
 
 services:
   truxify-api:
-    image: truxify/api:latest
+    image: truxify/api:1.0.0
     deploy:
       replicas: 3
       update_config:
@@ -213,9 +213,11 @@ spec:
 
 ### Deploying to the Cluster
 
-Apply the API ServiceAccount, Deployment, and Service together:
+Apply the API ServiceAccount, Deployment, and Service using the repository manifests:
 ```bash
-kubectl apply -f deployment.yaml
+kubectl apply -f k8s/authorization/api-service-account.yaml \
+  -f k8s/deployments/api-deployement.yaml \
+  -f k8s/services/api-service.yaml
 ```
 
 ### Health Endpoints
