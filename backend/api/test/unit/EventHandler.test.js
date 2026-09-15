@@ -69,6 +69,30 @@ describe("EventHandler", () => {
     await expect(h.handle({})).rejects.toThrow(/timed out/);
   });
 
+  it("clears the timeout when the handler resolves early", async () => {
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const h = new EventHandler(vi.fn().mockResolvedValue("result"), { timeout: 1000 });
+
+    try {
+      await expect(h.handle({})).resolves.toBe("result");
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      clearTimeoutSpy.mockRestore();
+    }
+  });
+
+  it("clears the timeout when the handler rejects early", async () => {
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const h = new EventHandler(vi.fn().mockRejectedValue(new Error("boom")), { timeout: 1000 });
+
+    try {
+      await expect(h.handle({})).rejects.toThrow("boom");
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      clearTimeoutSpy.mockRestore();
+    }
+  });
+
   it("calls onError when handler throws and onError is provided", async () => {
     const onError = vi.fn().mockReturnValue("fallback");
     const handler = vi.fn().mockRejectedValue(new Error("boom"));
