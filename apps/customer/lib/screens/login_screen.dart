@@ -55,34 +55,13 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _sendOtp() {
+    void _sendOtp() {
     FocusScope.of(context).unfocus();
-    final phone = _phoneController.text.replaceAll(' ', '').trim();
-
-    if (phone.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter phone number')),
-      );
+    final String? cleanedPhone = _validateAndGetCleanedPhone(_phoneController);
+    if (cleanedPhone == null) {
       return;
     }
-
-    if (phone.length != 10) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Phone number must be exactly 10 digits'),
-        ),
-      );
-      return;
-    }
-
-    if (int.tryParse(phone) == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Phone number can only contain digits'),
-        ),
-      );
-      return;
-    }
+    handleOtpRequest(_phoneController);
     setState(() => _showOtp = true);
   }
 
