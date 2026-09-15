@@ -137,4 +137,21 @@ describe('webhookRoutes', () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('Webhook timestamp outside accepted window');
   });
+
+  it('rejects future signed requests', async () => {
+    const payload = { eventType: 'ORDER_CREATED' };
+    const body = JSON.stringify(payload);
+    const timestamp = Date.now() + (6 * 60 * 1000);
+    const nonce = 'unit-test-future-nonce';
+    const sig = makeSignature(body, timestamp, nonce);
+    const res = await request(app)
+      .post('/api/webhooks/escrow')
+      .set('x-webhook-signature', sig)
+      .set('x-escrow-timestamp', String(timestamp))
+      .set('x-escrow-nonce', nonce)
+      .set('Content-Type', 'application/json')
+      .send(payload);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Webhook timestamp outside accepted window');
+  });
 });
