@@ -67,7 +67,7 @@ function makeApp() {
 
 describe('device pruning authorization', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    pruneDevices.mockClear();
   });
 
   it('registers the pruning route with an admin-only role guard', () => {
