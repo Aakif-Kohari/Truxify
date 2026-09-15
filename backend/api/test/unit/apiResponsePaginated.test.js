@@ -55,4 +55,31 @@ describe('apiResponse paginated', () => {
     expect(result.pagination.hasNextPage).toBe(false);
     expect(result.pagination.hasPrevPage).toBe(false);
   });
+
+  it('handles non-numeric string inputs without producing NaN in pagination', () => {
+    const result = paginated([1, 2], 'abc', 'xyz', 'foo');
+    expect(result.pagination.page).toBe(1);
+    expect(result.pagination.limit).toBe(10);
+    expect(result.pagination.pageSize).toBe(10);
+    expect(result.pagination.total).toBe(0);
+    expect(result.pagination.totalPages).toBe(0);
+    expect(result.pagination.hasNextPage).toBe(false);
+    expect(result.pagination.hasPrevPage).toBe(false);
+  });
+
+  it('handles null values for page, limit, and total gracefully', () => {
+    const result = paginated([1, 2], null, null, null);
+    expect(result.pagination.page).toBe(1);
+    expect(result.pagination.limit).toBe(10);
+    expect(result.pagination.pageSize).toBe(10);
+    expect(result.pagination.total).toBe(0);
+    expect(result.pagination.totalPages).toBe(0);
+  });
+
+  it('caps limit at MAX_PAGE_SIZE (1000)', () => {
+    const result = paginated([], 1, 5000, 10000);
+    expect(result.pagination.limit).toBe(1000);
+    expect(result.pagination.pageSize).toBe(1000);
+    expect(result.pagination.totalPages).toBe(10);
+  });
 });
