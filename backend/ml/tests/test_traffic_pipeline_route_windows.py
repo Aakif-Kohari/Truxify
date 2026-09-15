@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import numpy as np
 
 from backend.ml.services.traffic_pipeline import TrafficPipeline
@@ -6,7 +8,7 @@ from backend.ml.services.traffic_pipeline import TrafficPipeline
 def make_pipeline(max_route_windows=1000):
     pipeline = object.__new__(TrafficPipeline)
     pipeline._max_route_windows = max_route_windows
-    pipeline._route_windows = __import__("collections").OrderedDict()
+    pipeline._route_windows = OrderedDict()
     pipeline.model = type(
         "ModelStub",
         (),
@@ -38,12 +40,8 @@ def test_repeated_predictions_keep_history_for_the_same_route():
 
     assert len(pipeline._route_windows) == 1
     assert len(pipeline._route_windows["route-a"]) == 2
-    np.testing.assert_array_equal(
-        pipeline._route_windows["route-a"][0], row_a
-    )
-    np.testing.assert_array_equal(
-        pipeline._route_windows["route-a"][1], row_b
-    )
+    np.testing.assert_array_equal(pipeline._route_windows["route-a"][0], row_a)
+    np.testing.assert_array_equal(pipeline._route_windows["route-a"][1], row_b)
 
 
 def test_default_route_id_does_not_create_multiple_empty_keys():
