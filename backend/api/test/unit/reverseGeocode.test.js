@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Unit tests for backend/api/src/lib/reverseGeocode.js
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -48,11 +48,14 @@ describe('reverseGeocode', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('returns null for NaN or non-numeric coordinate strings', async () => {
+    it('returns null for NaN or non-numeric coordinate strings and does not query cache', async () => {
       expect(await reverseGeocode(NaN, 72.5)).toBeNull();
       expect(await reverseGeocode(23.0, NaN)).toBeNull();
       expect(await reverseGeocode('invalid', 72.5)).toBeNull();
       expect(await reverseGeocode(23.0, 'not-a-number')).toBeNull();
+      expect(await reverseGeocode('NaN', 'NaN')).toBeNull();
+      expect(mockRedisGet).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('returns null for out-of-range latitude (< -90 or > 90)', async () => {
