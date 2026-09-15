@@ -1016,18 +1016,18 @@ export class OrderLifecycleService {
             '[confirm-deposit] DB update failed:',
             updateErr?.message ?? 'escrow-status guard rejected the update'
           );
-        const { error: updateErr } = await this.orderRepository.updateOrder(orderId, {
-          escrow_status: 'funded',
-        });
+          const { error: fallbackErr } = await this.orderRepository.updateOrder(orderId, {
+            escrow_status: 'funded',
+          });
 
-      if (updateErr) {
-        logger.error('[confirm-deposit] DB update failed:', updateErr.message);
-        throw new DomainError(500, { error: 'Database update failed after deposit confirmation. Please contact support.' });
-      }
-    }
+          if (fallbackErr) {
+            logger.error('[confirm-deposit] Fallback DB update failed:', fallbackErr.message);
+            throw new DomainError(500, { error: 'Database update failed after deposit confirmation. Please contact support.' });
+          }
+        }
 
-    // Two-phase acceptance (#5724): finalize the driver assignment now that
-    // the escrow deposit is confirmed.
+        // Two-phase acceptance (#5724): finalize the driver assignment now that
+        // the escrow deposit is confirmed.
         const pending = order.pending_bid_acceptance;
         if (pending) {
           const { error: acceptErr } = await this.orderRepository.executeRpc('accept_bid_tx', {
