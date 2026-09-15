@@ -118,7 +118,7 @@ runs:
 
     - name: Ensure GitHub labels
       if: steps.hash.outputs.changed == 'true'
-      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
           const labels = [
@@ -557,7 +557,7 @@ runs:
 
     - name: 'Layer 4: Create GitHub issues (all sources, dedup-guaranteed)'
       if: steps.hash.outputs.changed == 'true'
-      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
           const fs     = require('fs');
