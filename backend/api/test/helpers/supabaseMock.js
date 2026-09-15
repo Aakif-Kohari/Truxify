@@ -482,6 +482,7 @@ export function createSupabaseMock(initialStore = {}) {
           profile.fcm_token = nextActive?.fcm_token ?? null;
           profile.fcm_token_updated_at = nowIso;
         }
+            return Promise.resolve({ data: row ? 1 : 0, error: null });
       }
       // Simulate the append_maintenance_photos PL/pgSQL RPC (see
       // migrations/20260811000000_create_append_maintenance_photos.sql)

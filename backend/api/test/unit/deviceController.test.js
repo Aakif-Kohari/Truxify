@@ -145,6 +145,6 @@ describe('unregisterDeviceToken', () => {
       success: true,
       message: 'Device token unregistered',
     });
-    expect(supabaseMock.calls.some((call) => call.table === 'user_devices' && call.mode === 'delete')).toBe(true);
+    expect(supabaseMock.calls.some((call) => call.rpc === 'unregister_device_token')).toBe(true);
   });
 });
