@@ -6,6 +6,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { clampGeohashPrecision } from '../../src/lib/reverseGeocode.js';
 
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}));
+
+vi.mock('../../src/middleware/logger.js', () => ({
+  default: mockLogger,
+}));
+
 const { mockFetch, mockRedisGet, mockRedisSet } = vi.hoisted(() => ({
   mockFetch: vi.fn(),
   mockRedisGet: vi.fn(),
@@ -21,7 +32,7 @@ vi.mock('../../src/config/db.js', () => ({
   },
 }));
 
-const { reverseGeocode } = await import('../../src/lib/reverseGeocode.js');
+import { reverseGeocode } from '../../src/lib/reverseGeocode.js';
 
 describe('reverseGeocode - Comprehensive Edge Cases', () => {
   beforeEach(() => {
@@ -79,6 +90,7 @@ describe('reverseGeocode - Comprehensive Edge Cases', () => {
       
       expect(result).toBe('MG Road, Cyber City, Indore');
       expect(mockRedisGet).toHaveBeenCalledTimes(1);
+      expect(mockRedisGet).toHaveBeenCalledWith('geocode:22.720,75.858');
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -97,7 +109,14 @@ describe('reverseGeocode - Comprehensive Edge Cases', () => {
       
       expect(result).toBe('Rajwada, Indore');
       expect(mockFetch).toHaveBeenCalledOnce();
+      expect(mockFetch.mock.calls[0][0]).toContain('lat=22.720&lon=75.858');
       expect(mockRedisSet).toHaveBeenCalledTimes(1);
+      expect(mockRedisSet).toHaveBeenCalledWith(
+        'geocode:22.720,75.858',
+        'Rajwada, Indore',
+        'EX',
+        604800
+      );
     });
 
     it('returns null when Nominatim API returns non-ok response without throwing', async () => {
