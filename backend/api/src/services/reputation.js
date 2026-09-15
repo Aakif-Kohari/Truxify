@@ -225,6 +225,23 @@ export async function getDriverReputation(walletAddress) {
 }
 
 
+export const MAX_REPUTATION = 10000;
+export const MIN_REPUTATION = 0;
+
+/**
+ * Clamp a reputation score to valid bounds [0, MAX_REPUTATION].
+ * Handles NaN, undefined, and non-numeric inputs safely by falling back to 0.
+ *
+ * @param {number|any} points - Reputation points to clamp
+ * @returns {number} Clamped reputation score in [0, 10000]
+ */
+export function clampReputation(points) {
+  const n = Number(points);
+  if (!Number.isFinite(n) || n < MIN_REPUTATION) return MIN_REPUTATION;
+  if (n > MAX_REPUTATION) return MAX_REPUTATION;
+  return Math.round(n);
+}
+
 // === Spec 23: ===
 // === Spec 23: rating bounds ===
 const MIN_R = 1.00, MAX_R = 5.00;

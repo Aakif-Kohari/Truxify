@@ -184,6 +184,62 @@ void main() {
     });
   });
 
+  group('MarketplaceRepository.fetchDriverBids', () {
+    test('parses bids from a { bids } response envelope', () async {
+      final client = MockClient((request) async {
+        expect(request.url.path, '/api/driver/bids');
+        return http.Response(
+          jsonEncode({
+            'bids': [
+              {
+                'id': 'bid-1',
+                'load_id': 'load-1',
+                'driver_id': 'driver-1',
+                'bid_amount': 150000,
+                'status': 'pending',
+              },
+            ],
+          }),
+          200,
+        );
+      });
+
+      final bids = await _repository(client).fetchDriverBids();
+
+      expect(bids, hasLength(1));
+      expect(bids.first.id, 'bid-1');
+      expect(bids.first.loadId, 'load-1');
+      expect(bids.first.driverId, 'driver-1');
+      expect(bids.first.amount, 1500);
+      expect(bids.first.status.name, 'pending');
+    });
+
+    test('parses bids from a bare list response', () async {
+      final client = MockClient((request) async {
+        expect(request.url.path, '/api/driver/bids');
+        return http.Response(
+          jsonEncode([
+            {
+              'id': 'bid-2',
+              'load_id': 'load-2',
+              'driver_id': 'driver-2',
+              'bid_amount': 200000,
+              'status': 'accepted',
+            },
+          ]),
+          200,
+        );
+      });
+
+      final bids = await _repository(client).fetchDriverBids();
+
+      expect(bids, hasLength(1));
+      expect(bids.first.id, 'bid-2');
+      expect(bids.first.amount, 2000);
+      expect(bids.first.status.name, 'accepted');
+    });
+  });
+
   group('MarketplaceRepository.submitBid', () {
     test('posts paisa-converted bid amount and parses response', () async {
       final client = MockClient((request) async {
