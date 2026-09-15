@@ -55,10 +55,22 @@ class AlertRouter {
     try {
       switch (channel) {
         case ALERT_CHANNELS.SLACK:
+          if (!this.slackClient) {
+            logger.warn({ channel }, '[AlertRouter] Slack client not configured');
+            return Promise.reject(new Error('Slack client not configured'));
+          }
           return await this.sendSlackAlert(alert);
         case ALERT_CHANNELS.EMAIL:
+          if (!this.emailService) {
+            logger.warn({ channel }, '[AlertRouter] Email service not configured');
+            return Promise.reject(new Error('Email service not configured'));
+          }
           return await this.sendEmailAlert(alert);
         case ALERT_CHANNELS.SMS:
+          if (!this.smsService) {
+            logger.warn({ channel }, '[AlertRouter] SMS service not configured');
+            return Promise.reject(new Error('SMS service not configured'));
+          }
           return await this.sendSMSAlert(alert);
         case ALERT_CHANNELS.DASHBOARD:
           return await this.logToDashboard(alert);
