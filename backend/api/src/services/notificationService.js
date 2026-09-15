@@ -5,6 +5,13 @@ import { hashOtp, verifyOtpHash } from '../lib/otpHashing.js';
 import { measureExecution } from '../core/performanceMetrics.js';
 import { DomainError } from './order/domainError.js';
 
+/**
+ * Notification Service
+ * Handles FCM push notification fan-outs, device token deduplication,
+ * permanent vs transient error classification, and delivery-OTP management.
+ * Resolved duplicate import issues (#14874) to ensure clean module evaluation.
+ */
+
 // ============================================================================
 // FCM fan-out configuration
 // ============================================================================
