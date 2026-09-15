@@ -16,7 +16,7 @@ function buildApp(webhookRouter, { autoSignReplayMetadata = false } = {}) {
       const hasTimestamp = Boolean(req.headers['x-escrow-timestamp']);
       const hasNonce = Boolean(req.headers['x-escrow-nonce']);
       if (
-        req.path === '/escrow'
+        req.path === '/api/webhooks/escrow'
         && process.env.WEBHOOK_SECRET
         && signature
         && signature.length === 64
