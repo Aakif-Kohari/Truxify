@@ -68,7 +68,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (hasSession) {
       final bool canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics ||
           await _localAuth.isDeviceSupported();
-
+          if (!mounted) return;
       if (canAuthenticateWithBiometrics) {
         await _authenticateWithBiometrics();
       }
@@ -129,7 +129,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (otp == mockOtp) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('is_authenticated', true);
-
+      if (!mounted) return;
       if (mounted) {
         _navigateToShell();
       }
