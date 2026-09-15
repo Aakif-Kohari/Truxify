@@ -207,6 +207,7 @@ class OrderReadModel {
       .upsert([{
         order_id: orderId,
         payload: snapshot.data || {},
+        status: snapshot.status ?? deriveOrderStatus(snapshot.data),
         event_type: snapshot.eventType || 'ORDER_UPDATED',
         version: snapshot.version ?? null,
         updated_at: new Date().toISOString(),
@@ -289,7 +290,7 @@ class OrderReadModel {
         .select('*');
 
       if (filters.status) {
-        query = query.eq('payload->>status', filters.status);
+        query = query.eq('status', filters.status);
       }
       if (filters.customerId) {
         query = query.eq('payload->>customer_id', filters.customerId);
@@ -349,7 +350,7 @@ class OrderReadModel {
       const { count, error } = await this.client
         .from(ORDER_READ_MODEL_TABLE)
         .select('*', { count: 'exact', head: true })
-        .eq('payload->>status', status);
+        .eq('status', status);
 
       if (error) throw error;
       stats[status] = count ?? 0;
