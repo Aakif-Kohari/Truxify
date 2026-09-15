@@ -6,6 +6,8 @@ import pandas as pd
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from app.models.base import get_active_generation, restore_previous_model
+from app.models.demand_forecast import MODEL_NAME as DEMAND_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 Base = declarative_base()
@@ -33,6 +35,7 @@ class ABTestModel:
         self.Session = sessionmaker(bind=self.engine)
         self.threshold = threshold  # If new model < threshold% of old, rollback
         self.traffic_split = 0.10  # 10% to new model
+        self._test_states: Dict[str, Dict[str, Any]] = {}
 
     def get_model_for_request(self, request_id: str) -> Dict[str, Any]:
         """Route request to production or shadow model based on A/B split"""
@@ -55,6 +58,14 @@ class ABTestModel:
 
     def log_metrics(self, test_id: str, model_version: str, metrics: Dict[str, float], request_id: str):
         """Log performance metrics for analysis"""
+        test_state = self._test_states.setdefault(test_id, {
+            'test_id': test_id,
+            'production_version': self.get_production_version(),
+            'shadow_version': model_version,
+            'started_at': datetime.utcnow().isoformat(),
+            'status': 'active',
+        })
+        test_state['shadow_version'] = model_version
         session = self.Session()
         for metric_name, value in metrics.items():
             metric = ABTestMetrics(
@@ -176,13 +187,15 @@ class ABTestModel:
             ).order_by(ABTestMetrics.timestamp.desc()).first()
 
             if recent:
-                return {
+                state = self._test_states.setdefault(recent.test_id, {
                     'test_id': recent.test_id,
-                    'production_version': 'production',
+                    'production_version': self.get_production_version(),
                     'shadow_version': recent.model_version,
                     'started_at': recent.timestamp.isoformat(),
-                    'status': 'active'
-                }
+                    'status': 'active',
+                })
+                if state.get('status') == 'active':
+                    return state
             return None
         except Exception:
             return None
@@ -190,20 +203,27 @@ class ABTestModel:
             session.close()
 
     def get_production_version(self) -> str:
-        return 'production'
+        return get_active_generation(DEMAND_MODEL_NAME) or 'production'
 
     def trigger_rollback(self, test_id: str) -> Dict[str, Any]:
         """Auto-rollback to previous version if shadow model underperforms"""
         evaluation = self.evaluate_test(test_id)
 
         if evaluation.get('should_rollback', False):
-            logger.warning(f"⚠️ Rollback triggered for test {test_id}")
+            restored = restore_previous_model(DEMAND_MODEL_NAME)
+            state = self._test_states.setdefault(test_id, {'test_id': test_id})
+            state.update({
+                'status': 'rolled_back' if restored else 'rollback_failed',
+                'rolled_back': restored,
+                'production_version': self.get_production_version(),
+            })
+            logger.warning("Demand forecast rollback %s for test %s", "completed" if restored else "failed", test_id)
             return {
-                'action': 'rollback',
+                'action': 'rollback' if restored else 'rollback_failed',
                 'test_id': test_id,
                 'reason': 'Shadow model underperformed',
-                'production_version': 'production',
-                'previous_version': 'production',
+                'rolled_back': restored,
+                'production_version': self.get_production_version(),
                 'timestamp': datetime.utcnow().isoformat()
             }
         return {
