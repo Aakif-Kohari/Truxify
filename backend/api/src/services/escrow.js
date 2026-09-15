@@ -68,7 +68,7 @@ const ESCROW_ABI = [
   'function raiseDispute(uint256 bookingId) external',
   'function resolveDispute(uint256 bookingId, uint256 driverAmount) external',
   'function resolveDisputeTimeout(uint256 bookingId) external',
-  'function bookings(uint256 bookingId) external view returns (address customer, address driver, uint256 amount, uint8 status, bool paid, bool started, uint256 createdAt)'
+  'function bookings(uint256 bookingId) external view returns (address customer, address driver, uint256 amount, uint8 status, bool paid, bool started, uint256 createdAt, uint256 disputedAt)'
 ]
 
 const rpcUrl            = process.env.POLYGON_RPC_URL;
