@@ -274,11 +274,30 @@ export class TrackingTokenService {
 
     const { data: order, error: orderError } = await this._supabaseAdmin
       .from('orders')
-      .select('driver_id')
+      .select('id, driver_id')
       .eq('order_display_id', orderDisplayId)
-      .single();
+      .maybeSingle();
 
     if (orderError || !order || !order.driver_id) {
+      return null;
+    }
+
+    const { data: activeTrip, error: tripError } = await this._supabaseAdmin
+      .from('trips')
+      .select('order_id')
+      .eq('driver_id', order.driver_id)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (tripError) {
+      this._logger.error(
+        { error: tripError, orderDisplayId, driverId: order.driver_id },
+        'Failed to verify active trip for public tracking'
+      );
+      return null;
+    }
+
+    if (!activeTrip || activeTrip.order_id !== order.id) {
       return null;
     }
 
@@ -289,7 +308,7 @@ export class TrackingTokenService {
       .eq('is_active', true)
       .order('last_updated_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (locationError) {
       this._logger.error(

@@ -60,10 +60,10 @@ describe('apiResponse helpers', () => {
       expect(result.pagination.hasPrevPage).toBe(false);
     });
 
-    it('handles negative page value', () => {
+    it('clamps negative page values to 1', () => {
       const result = paginated([], -5, 10, 0);
-      expect(result.pagination.page).toBe(-5);
-      expect(result.pagination.hasNextPage).toBe(true);
+      expect(result.pagination.page).toBe(1);
+      expect(result.pagination.hasNextPage).toBe(false);
       expect(result.pagination.hasPrevPage).toBe(false);
     });
 
@@ -89,25 +89,43 @@ describe('apiResponse helpers', () => {
       expect(result.pagination.hasPrevPage).toBe(true);
     });
 
-    it('converts page and limit to numbers', () => {
+    it('converts numeric string page and limit to numbers', () => {
       const result = paginated([], '2', '10', 30);
       expect(result.pagination.page).toBe(2);
       expect(result.pagination.limit).toBe(10);
     });
-  });
 
-  it('clamps negative page values to 1', () => {
-    const result = paginated([], -5, 10, 0);
-    expect(result.pagination.page).toBe(1);
-    expect(result.pagination.hasNextPage).toBe(false);
-    expect(result.pagination.hasPrevPage).toBe(false);
-  });
+    it('handles non-numeric string values gracefully with defaults', () => {
+      const result = paginated([], 'abc', 'xyz', 'invalid');
+      expect(result.pagination.page).toBe(1);
+      expect(result.pagination.limit).toBe(10);
+      expect(result.pagination.total).toBe(0);
+      expect(result.pagination.totalPages).toBe(0);
+    });
 
-  it('clamps NaN page values to 1', () => {
-    const result = paginated([], NaN, 10, 50);
-    expect(result.pagination.page).toBe(1);
-    expect(result.pagination.totalPages).toBe(5);
-    expect(result.pagination.hasNextPage).toBe(true);
-    expect(result.pagination.hasPrevPage).toBe(false);
+    it('handles null and undefined values gracefully with defaults', () => {
+      const result = paginated([], null, null, null);
+      expect(result.pagination.page).toBe(1);
+      expect(result.pagination.limit).toBe(10);
+      expect(result.pagination.total).toBe(0);
+      expect(result.pagination.totalPages).toBe(0);
+    });
+
+    it('handles NaN and Infinity values gracefully with defaults', () => {
+      const result = paginated([], NaN, Infinity, -Infinity);
+      expect(result.pagination.page).toBe(1);
+      expect(result.pagination.limit).toBe(10);
+      expect(result.pagination.total).toBe(0);
+      expect(result.pagination.totalPages).toBe(0);
+    });
+
+    it('handles empty string values gracefully with defaults', () => {
+      const result = paginated([], '', '  ', '');
+      expect(result.pagination.page).toBe(1);
+      expect(result.pagination.limit).toBe(10);
+      expect(result.pagination.total).toBe(0);
+      expect(result.pagination.totalPages).toBe(0);
+    });
   });
 });
+

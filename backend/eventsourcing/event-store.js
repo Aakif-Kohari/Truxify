@@ -13,6 +13,7 @@ import {
   EventStorePersistenceError,
   toEventStoreError,
 } from './errors.js';
+import { deriveOrderStatus } from '../api/src/core/orders/read-model-schema.js';
 
 // Topic names mirror the values in backend/kafka/config/kafka.config.js.
 // They are duplicated here (instead of importing TOPICS) so this package does
@@ -422,6 +423,7 @@ class EventStore {
             .upsert([{
                 order_id: orderId,
                 payload: state,
+                status: deriveOrderStatus(state),
                 event_type: eventType,
                 version: version ?? state?.version,
                 updated_at: new Date().toISOString()
@@ -572,7 +574,7 @@ class EventStore {
             .select('*');
 
         if (filters.status) {
-            query = query.eq('payload->>status', filters.status);
+            query = query.eq('status', filters.status);
         }
         if (filters.customerId) {
             query = query.eq('payload->>customerId', filters.customerId);
