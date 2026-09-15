@@ -31,9 +31,7 @@ vi.mock('../../src/config/db.js', () => ({
 
 import { reverseGeocode, clampGeohashPrecision } from '../../src/lib/reverseGeocode.js';
 
-// Verified and cleaned up reverseGeocode unit test suite
-
-describe('reverseGeocode', () => {
+describe('reverseGeocode - Comprehensive Edge Cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -56,6 +54,13 @@ describe('reverseGeocode', () => {
       expect(await reverseGeocode('NaN', 'NaN')).toBeNull();
       expect(mockRedisGet).not.toHaveBeenCalled();
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('returns null for Infinity or -Infinity lat/lng values', async () => {
+      expect(await reverseGeocode(Infinity, 72.5)).toBeNull();
+      expect(await reverseGeocode(-Infinity, 72.5)).toBeNull();
+      expect(await reverseGeocode(23.0, Infinity)).toBeNull();
+      expect(await reverseGeocode(23.0, -Infinity)).toBeNull();
     });
 
     it('returns null for out-of-range latitude (< -90 or > 90)', async () => {
