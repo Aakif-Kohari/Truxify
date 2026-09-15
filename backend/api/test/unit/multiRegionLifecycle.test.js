@@ -134,4 +134,59 @@ describe('RegionService lifecycle', () => {
         expect(service.redis.incr).not.toHaveBeenCalled();
         expect(service.redis.set).not.toHaveBeenCalled();
     });
+
+    it('returns empty health metrics when the Redis health payload is malformed', async () => {
+        const service = Object.create(RegionService.prototype);
+        service.regions = [{ name: 'us-east-1' }];
+        service.redis = {
+            get: vi.fn()
+                .mockResolvedValueOnce('12')
+                .mockResolvedValueOnce('{invalid-json')
+        };
+
+        const metrics = await service.getRegionMetrics();
+
+        expect(metrics).toEqual({
+            routing: { 'us-east-1': 12 },
+            health: {}
+        });
+    });
+
+    it('preserves valid Redis health metrics', async () => {
+        const health = {
+            'us-east-1': {
+                healthy: true,
+                latency: 42
+            }
+        };
+        const service = Object.create(RegionService.prototype);
+        service.regions = [{ name: 'us-east-1' }];
+        service.redis = {
+            get: vi.fn()
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(JSON.stringify(health))
+        };
+
+        const metrics = await service.getRegionMetrics();
+
+        expect(metrics.routing).toEqual({ 'us-east-1': 0 });
+        expect(metrics.health).toEqual(health);
+    });
+
+    it('returns empty health metrics for valid non-object Redis payloads', async () => {
+        const service = Object.create(RegionService.prototype);
+        service.regions = [{ name: 'us-east-1' }];
+        service.redis = {
+            get: vi.fn()
+                .mockResolvedValueOnce('not-a-number')
+                .mockResolvedValueOnce('null')
+        };
+
+        const metrics = await service.getRegionMetrics();
+
+        expect(metrics).toEqual({
+            routing: { 'us-east-1': 0 },
+            health: {}
+        });
+    });
 });

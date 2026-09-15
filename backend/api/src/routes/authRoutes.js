@@ -443,14 +443,19 @@ router.post("/verify", async (req, res) => {
       }
     }
 
-    let userId = `usr-${verifiedUid.slice(-8)}`;
+    let userId = null;
     if (supabase) {
       try {
-        const { data: profile } = await supabase
+        const { data: profile, error: profileErr } = await supabase
           .from("profiles")
           .select("id, role, full_name, phone, is_active")
           .or(`firebase_uid.eq.${verifiedUid},email.eq.${verifiedEmail}`)
           .maybeSingle();
+
+        if (profileErr) {
+          logger.error(`[auth/verify] Supabase profile query error: ${profileErr.message}`);
+          return res.status(500).json({ success: false, error: "Database error during authentication." });
+        }
 
         if (profile) {
           if (profile.is_active === false) {
@@ -461,10 +466,21 @@ router.post("/verify", async (req, res) => {
           }
           userId = profile.id;
           verifiedRole = profile.role || verifiedRole;
+        } else if (process.env.NODE_ENV !== "test") {
+          return res.status(401).json({
+            success: false,
+            error: "User profile not found. Please complete profile registration before signing in.",
+            code: "PROFILE_NOT_FOUND",
+          });
         }
       } catch (dbErr) {
-        logger.warn(`[auth/verify] Supabase profile lookup skipped: ${dbErr.message}`);
+        logger.error(`[auth/verify] Supabase profile lookup failed: ${dbErr.message}`);
+        return res.status(500).json({ success: false, error: "Internal server error." });
       }
+    }
+
+    if (!userId) {
+      userId = `usr-${verifiedUid.slice(-8)}`;
     }
 
     const backendJwt = jwt.sign(
