@@ -64,6 +64,7 @@ const ESCROW_ABI = [
   'function releasePayment(uint256 bookingId) external',
   'function cancelBooking(uint256 bookingId) external',
   'function cancelWithPenalty(uint256 bookingId, uint256 driverFee) external',
+  'function updateDropLocation(uint256 bookingId, uint256 newAmount) external payable',
   'function markBookingStarted(uint256 bookingId) external',
   'function raiseDispute(uint256 bookingId) external',
   'function resolveDispute(uint256 bookingId, uint256 driverAmount) external',
@@ -792,6 +793,41 @@ export async function escrowLockPayment(orderDisplayId, customerWalletAddress, d
       return { txHash: receipt.hash, bookingId };
     } catch (err) {
       logger.error(`[escrow] lockPayment failed for booking ${orderDisplayId}: ${err?.message ?? String(err)}`);
+      return { txHash: null, bookingId, error: err?.message ?? String(err) };
+    }
+  });
+}
+
+/**
+ * Adjust the on-chain escrow amount after a drop-location repricing.
+ * The relayer tops up increases and receives a pull-refund for decreases.
+ */
+export async function updateEscrowDropAmount(orderDisplayId, newAmountWei, topUpWei = 0n) {
+  return measureExecution('EscrowService.updateEscrowDropAmount', async () => {
+    const bookingId = getEscrowBookingId(orderDisplayId);
+
+    if (!escrowContract) {
+      const error = 'Escrow contract is not initialised.';
+      logger.error(`[escrow] ${error}`);
+      return { txHash: null, bookingId, error, code: 'ESCROW_NOT_CONFIGURED' };
+    }
+
+    if (await isEscrowPaused()) {
+      logger.warn(`[escrow] Circuit breaker paused — refusing drop amount update for ${orderDisplayId}.`);
+      return escrowPausedResult(bookingId);
+    }
+
+    try {
+      const tx = await escrowContract.updateDropLocation(bookingId, newAmountWei, {
+        value: topUpWei,
+      });
+      const receipt = await tx.wait(1);
+      if (!receipt || receipt.status === 0) {
+        throw new Error('Escrow drop amount update transaction reverted or was not found.');
+      }
+      return { txHash: receipt.hash, bookingId };
+    } catch (err) {
+      logger.error(`[escrow] Drop amount update failed for ${orderDisplayId}: ${err?.message ?? String(err)}`);
       return { txHash: null, bookingId, error: err?.message ?? String(err) };
     }
   });
