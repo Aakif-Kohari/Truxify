@@ -67,8 +67,8 @@ router.get(
     try {
       const result = await predictEta({
         routeDistance: parseFloat(routeDistance || '10'),
-        timeOfDay: parseInt(timeOfDay || '12'),
-        dayOfWeek: parseInt(dayOfWeek || '1'),
+        timeOfDay: parseInt(timeOfDay || '12', 10),
+        dayOfWeek: parseInt(dayOfWeek || '1', 10),
         routeType: routeType || 'highway',
         historicalSpeed: parseFloat(historicalSpeed || '60')
       });
