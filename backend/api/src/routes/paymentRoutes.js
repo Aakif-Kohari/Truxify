@@ -272,10 +272,18 @@ router.post(
         }
 
         const { data: driverDetails } = await orderRepository.findDriverWallet(driverId);
-        const driverWallet = driverDetails?.polygon_wallet_address ?? '0xDriverAddress';
+        const driverWallet = driverDetails?.polygon_wallet_address ?? null;
 
         const { data: customerWalletData } = await orderRepository.findCustomerWallet(req.user.id);
-        const customerWallet = customerWalletData?.polygon_wallet_address ?? '0xCustomerAddress';
+        const customerWallet = customerWalletData?.polygon_wallet_address ?? null;
+
+        const isValidAddress = (addr) => typeof addr === 'string' && /^0x[a-fA-F0-9]{40}$/.test(addr);
+        if (!isValidAddress(driverWallet) || !isValidAddress(customerWallet)) {
+          return res.status(422).json({
+            error: 'A registered Polygon wallet is required for both customer and driver to lock escrow payment.',
+            code: 'WALLET_REQUIRED',
+          });
+        }
 
         const amountWei = typeof paisaToMaticWei === 'function' ? paisaToMaticWei(req.body.amount || order.total_amount) : String(req.body.amount);
 
