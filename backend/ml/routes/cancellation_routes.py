@@ -1,13 +1,13 @@
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 
 router = APIRouter(prefix="/cancellation-penalty", tags=["Cancellation Penalty"])
 
 
 class CancellationPenaltyRequest(BaseModel):
-    distance_covered_km: float = Field(..., ge=0)
-    total_distance_km: float = Field(..., gt=0)
-    total_amount: float = Field(..., ge=0, description="Booking amount in the supplied currency")
+    distance_covered_km: FiniteFloat = Field(..., ge=0)
+    total_distance_km: FiniteFloat = Field(..., gt=0)
+    total_amount: FiniteFloat = Field(..., ge=0, description="Booking amount in the supplied currency")
 
 
 class CancellationPenaltyResponse(BaseModel):

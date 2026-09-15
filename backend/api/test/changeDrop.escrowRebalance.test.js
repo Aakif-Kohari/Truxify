@@ -110,7 +110,7 @@ describe('changeDrop escrow rebalance (issue #5825)', () => {
     mocks.acquireLock.mockResolvedValue('lock-owner-1');
     mocks.releaseLock.mockResolvedValue(true);
     mocks.getRouteEstimate.mockResolvedValue({ distanceKm: 500 });
-    mocks.updateEscrowDropAmount.mockResolvedValue({ txHash: null });
+    mocks.updateEscrowDropAmount.mockResolvedValue({ txHash: '0xescrow-update' });
   });
 
   it('sends an escrow_amount_wei matching the re-priced total to the RPC', async () => {
@@ -156,6 +156,25 @@ describe('changeDrop escrow rebalance (issue #5825)', () => {
       expect.any(BigInt),
       expect.any(BigInt),
     );
+  });
+
+  it('rejects repricing when the escrow update has no transaction hash', async () => {
+    mocks.updateEscrowDropAmount.mockResolvedValue({ txHash: null });
+    const repo = makeRepo({
+      ...BASE_ORDER,
+      escrow_booking_id: 'booking-1',
+      escrow_amount_wei: '4000000000000000000000000',
+    });
+    const svc = makeService(repo);
+
+    await expect(svc.changeDrop(
+      'order-1',
+      'customer-1',
+      { drop_address: 'Mumbai', drop_lat: 19.076, drop_lng: 72.877 },
+      {},
+    )).rejects.toMatchObject({ status: 502 });
+
+    expect(repo.executeRpc).not.toHaveBeenCalled();
   });
 
   it('rejects change-drop once escrow funding has started or completed', async () => {

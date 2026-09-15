@@ -67,4 +67,23 @@ describe('predictCancellationPenalty', () => {
       totalAmount: 1200,
     })).rejects.toThrow('Invalid cancellation penalty response');
   });
+
+  it.each([
+    ['negative ratio', { penalty_amount: 300, covered_ratio: -0.01 }],
+    ['ratio above one', { penalty_amount: 300, covered_ratio: 1.01 }],
+    ['negative penalty', { penalty_amount: -1, covered_ratio: 0.25 }],
+    ['penalty above total amount', { penalty_amount: 1201, covered_ratio: 0.25 }],
+  ])('rejects a response with %s', async (_label, body) => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(body),
+    });
+
+    await expect(predictCancellationPenalty({
+      distanceCoveredKm: 25,
+      totalDistanceKm: 100,
+      totalAmount: 1200,
+    })).rejects.toThrow('Invalid cancellation penalty response');
+  });
 });

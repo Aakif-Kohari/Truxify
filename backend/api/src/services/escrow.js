@@ -807,8 +807,9 @@ export async function updateEscrowDropAmount(orderDisplayId, newAmountWei, topUp
     const bookingId = getEscrowBookingId(orderDisplayId);
 
     if (!escrowContract) {
-      logger.warn('[escrow] Contract not initialised — skipping drop amount update.');
-      return { txHash: null, bookingId };
+      const error = 'Escrow contract is not initialised.';
+      logger.error(`[escrow] ${error}`);
+      return { txHash: null, bookingId, error, code: 'ESCROW_NOT_CONFIGURED' };
     }
 
     if (await isEscrowPaused()) {

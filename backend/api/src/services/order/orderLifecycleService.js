@@ -633,10 +633,10 @@ export class OrderLifecycleService {
             newAmountWei,
             topUpWei,
           );
-          if (escrowUpdate.error) {
+          if (escrowUpdate.error || !escrowUpdate.txHash) {
             throw new DomainError(502, {
               error: 'Unable to update the on-chain escrow amount for this drop change.',
-              details: escrowUpdate.error,
+              details: escrowUpdate.error || 'Escrow update was not confirmed.',
             });
           }
         }

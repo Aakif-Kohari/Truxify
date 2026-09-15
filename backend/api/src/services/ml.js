@@ -327,7 +327,11 @@ export async function predictCancellationPenalty({
   if (
     result == null ||
     !Number.isFinite(result.penalty_amount) ||
-    !Number.isFinite(result.covered_ratio)
+    result.penalty_amount < 0 ||
+    result.penalty_amount > totalAmount ||
+    !Number.isFinite(result.covered_ratio) ||
+    result.covered_ratio < 0 ||
+    result.covered_ratio > 1
   ) {
     throw new Error('[ML] Invalid cancellation penalty response');
   }
