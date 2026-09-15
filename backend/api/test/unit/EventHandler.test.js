@@ -15,12 +15,12 @@ vi.mock("@opentelemetry/api", () => ({
 }));
 
 // Mock logger
-vi.mock("../../../src/middleware/logger.js", () => ({
+vi.mock("../../src/middleware/logger.js", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
 // Mock SpanFactory
-vi.mock("../../../src/core/telemetry/SpanFactory.js", () => ({
+vi.mock("../../src/core/telemetry/SpanFactory.js", () => ({
   default: {
     startEventHandlerSpan: vi.fn().mockReturnValue({
       setStatus: vi.fn(),
@@ -34,7 +34,7 @@ vi.mock("../../../src/core/telemetry/SpanFactory.js", () => ({
 }));
 
 // Mock ContextPropagator
-vi.mock("../../../src/core/telemetry/ContextPropagator.js", () => ({
+vi.mock("../../src/core/telemetry/ContextPropagator.js", () => ({
   ContextPropagator: {
     extractFromEventPayload: vi.fn().mockReturnValue(undefined),
     injectIntoEventPayload: vi.fn((e) => e),
