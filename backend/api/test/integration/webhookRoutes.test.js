@@ -207,6 +207,17 @@ describe('Webhook Routes — HMAC Signature Verification', () => {
       expect(res.body.error).toBe('Webhook timestamp outside accepted window');
     });
 
+    it('returns 401 for a future signed webhook', async () => {
+      const payload = { eventType: 'EscrowFunded' };
+      const { signature, timestamp, nonce } = signPayload(payload, Date.now() + 6 * 60 * 1000);
+      const res = await request(app).post('/api/webhooks/escrow')
+        .set('X-Webhook-Signature', signature)
+        .set('X-Escrow-Timestamp', String(timestamp))
+        .set('X-Escrow-Nonce', nonce).send(payload);
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('Webhook timestamp outside accepted window');
+    });
+
     it('returns 401 when the same nonce is replayed', async () => {
       const payload = { eventType: 'EscrowFunded' };
       const headers = signPayload(payload);
