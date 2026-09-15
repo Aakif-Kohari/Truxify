@@ -494,8 +494,8 @@ describe('notificationService', () => {
     });
   });
 
-  describe('sendDeliveryOtpNotification (#12329)', () => {
-    it('delivers the plaintext OTP to the customer via the FCM data payload', async () => {
+  describe('sendDeliveryOtpNotification (#15414)', () => {
+    it('delivers the supplied plaintext OTP to the customer via the FCM data payload', async () => {
       const otp = '654321';
       // Provide an FCM token so the push actually reaches firebaseAdmin.send.
       mockMaybeSingle.mockResolvedValue({ data: { fcm_token: 'fcm-token-xyz' }, error: null });
