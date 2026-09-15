@@ -2,13 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const requireRole = vi.fn((allowedRoles) => (req, res, next) => {
-  if (allowedRoles.includes(req.user?.role)) {
-    return next();
-  }
+const { requireRole, pruneDevices } = vi.hoisted(() => ({
+  requireRole: vi.fn((allowedRoles) => (req, res, next) => {
+    if (allowedRoles.includes(req.user?.role)) {
+      return next();
+    }
 
-  return res.status(403).json({ error: 'Forbidden: Insufficient privileges.' });
-});
+    return res.status(403).json({ error: 'Forbidden: Insufficient privileges.' });
+  }),
+  pruneDevices: vi.fn((req, res) => {
+    res.status(200).json({
+      success: true,
+      message: 'Successfully pruned 2 stale devices',
+      pruned: 2,
+    });
+  }),
+}));
 
 vi.mock('../../src/middleware/auth.js', () => ({
   authenticate: (req, _res, next) => {
@@ -34,26 +43,11 @@ vi.mock('../../src/validation/requestSchemas.js', () => ({
   unregisterDeviceSchema: {},
 }));
 
-const { pruneDevices } = vi.hoisted(() => ({
-  pruneDevices: vi.fn((req, res) => {
-    res.status(200).json({
-      success: true,
-      message: 'Successfully pruned 2 stale devices',
-      pruned: 2,
-    });
-  }),
-}));
-
 vi.mock('../../src/controllers/deviceController.js', () => ({
   registerDeviceToken: vi.fn(),
   unregisterDeviceToken: vi.fn(),
   getDevicePlatforms: vi.fn(),
   pruneDevices,
-}));
-
-vi.mock('../../src/config/db.js', () => ({
-  supabase: {},
-  supabaseAdmin: {},
 }));
 
 import deviceRoutes from '../../src/routes/deviceRoutes.js';
