@@ -55,12 +55,17 @@ router.post('/query', authenticate, userLimiter, upload.single('file'), async (r
         throw validationErr;
       }
       audioBuffer = file.buffer;
+      safeFilename = sanitizeUploadFilename(file.originalname, 'voice-query.wav');
     }
 
-    safeFilename = sanitizeUploadFilename(file.originalname, 'voice-query.wav');
+    const result = await processVoiceQuery(
+      req.user.id,
+      bookingId,
+      audioBuffer,
+      safeFilename,
+      textQuery
+    );
 
-    const result = await processVoiceQuery(req.user.id, bookingId, file.buffer, safeFilename);
-    
     // Prefix the audio_url with host if relative path.
     // SECURITY: when PUBLIC_BASE_URL is not set, fall back to a hardcoded default
     // rather than req.headers.host, which is attacker-controlled.
@@ -68,7 +73,7 @@ router.post('/query', authenticate, userLimiter, upload.single('file'), async (r
       const baseUrl = process.env.PUBLIC_BASE_URL || 'https://truxify.app';
       result.audio_url = `${baseUrl}${result.audio_url}`;
     }
-    
+
     res.json(result);
   } catch (err) {
     logger.error('Voice AI query failed:', err);
