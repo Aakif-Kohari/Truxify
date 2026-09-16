@@ -157,7 +157,12 @@ async def train_model(request: TrainRequest):
         train_data = []
         val_data = []
         
-        loss = optimizer.train(train_data, val_data, request.epochs)
+        loss = optimizer.train(
+            train_data,
+            val_data,
+            request.epochs,
+            request.learning_rate
+        )
         
         return {
             'success': True,
