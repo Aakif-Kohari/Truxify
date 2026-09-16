@@ -4,12 +4,24 @@ from tensorflow import keras
 import redis
 import json
 import logging
-from typing import Dict, Any
-from cryptography.fernet import Fernet
+from typing import Dict, Any, Optional
+from cryptography.fernet import Fernet, InvalidToken
 import os
 import time
 
 logger = logging.getLogger(__name__)
+
+
+def is_valid_fernet_key(key: Any) -> bool:
+    """Validate whether key is a valid 32-byte url-safe base64-encoded Fernet key."""
+    if not key or not isinstance(key, (bytes, str)):
+        return False
+    try:
+        Fernet(key)
+        return True
+    except Exception:
+        return False
+
 
 class FederatedClient:
     """Federated Learning Client for Driver Device"""
@@ -54,18 +66,38 @@ class FederatedClient:
         return model
 
     def _register_client(self):
-        """Register client with server and refresh registration TTL"""
+        """Register client with server, refresh registration TTL, and load encryption key."""
         try:
             self.redis.sadd('federated:clients', self.client_id)
             self.redis.setex(f'federated:client:{self.client_id}:ttl', 86400, 'active')
 
-            self.encryption_key = self.redis.get('federated:encryption_key')
-            if not self.encryption_key:
-                logger.warning('No server encryption key found in Redis; federated weight exchange will fail')
-                return
-            self.cipher = Fernet(self.encryption_key)
+            self.refresh_encryption_key()
         except Exception as e:
             logger.warning(f"Failed to register client {self.client_id} with Redis: {e}")
+
+    def refresh_encryption_key(self) -> bool:
+        """Fetch the latest active encryption key from Redis and initialize cipher.
+
+        Returns True if a valid key was retrieved and cipher configured, False otherwise.
+        """
+        try:
+            raw_key = self.redis.get('federated:encryption_key')
+            if not raw_key:
+                logger.warning(f"No server encryption key found in Redis for client {self.client_id}")
+                return False
+
+            key_bytes = raw_key.encode('utf-8') if isinstance(raw_key, str) else raw_key
+            if not is_valid_fernet_key(key_bytes):
+                logger.warning(f"Malformed encryption key found in Redis for client {self.client_id}")
+                return False
+
+            self.encryption_key = key_bytes
+            self.cipher = Fernet(self.encryption_key)
+            logger.debug(f"🔑 Client {self.client_id} updated encryption cipher from Redis")
+            return True
+        except Exception as e:
+            logger.warning(f"Error refreshing encryption key for client {self.client_id}: {e}")
+            return False
 
     def _subscribe_updates(self):
         """Subscribe to server updates via Redis Pub/Sub"""
@@ -110,34 +142,54 @@ class FederatedClient:
         """Receive model weights from server and synchronize active round"""
         try:
             encrypted = self.redis.get(f'federated:weights:{self.client_id}')
-            if encrypted and self.cipher:
-                # Decrypt
-                decrypted = self.cipher.decrypt(encrypted)
-                payload = json.loads(decrypted)
+            if not encrypted:
+                return False
 
-                if isinstance(payload, dict):
-                    weights = payload.get('weights', [])
-                    if 'round' in payload:
-                        self.training_round = payload['round']
-                elif isinstance(payload, list):
-                    weights = payload
-                    saved_round = self.redis.get('federated:round')
-                    if saved_round is not None:
-                        try:
-                            self.training_round = int(saved_round)
-                        except (ValueError, TypeError):
-                            pass
-                else:
+            if not self.cipher:
+                if not self.refresh_encryption_key():
+                    logger.warning(f"Cannot decrypt weights for client {self.client_id}: encryption cipher unavailable")
                     return False
 
-                # Convert to numpy
-                weights_np = [np.array(w) for w in weights]
+            decrypted = None
+            try:
+                decrypted = self.cipher.decrypt(encrypted)
+            except InvalidToken:
+                logger.warning(f"InvalidToken decrypting weights for client {self.client_id}; attempting key refresh")
+                if self.refresh_encryption_key():
+                    try:
+                        decrypted = self.cipher.decrypt(encrypted)
+                    except InvalidToken:
+                        logger.error(f"Failed to decrypt weights after key refresh for client {self.client_id}: InvalidToken")
+                        return False
+                else:
+                    logger.error(f"Failed to refresh key following InvalidToken for client {self.client_id}")
+                    return False
 
-                # Update local model
-                self.model.set_weights(weights_np)
+            payload = json.loads(decrypted)
 
-                logger.info(f"📥 Received weights for round {self.training_round}")
-                return True
+            if isinstance(payload, dict):
+                weights = payload.get('weights', [])
+                if 'round' in payload:
+                    self.training_round = payload['round']
+            elif isinstance(payload, list):
+                weights = payload
+                saved_round = self.redis.get('federated:round')
+                if saved_round is not None:
+                    try:
+                        self.training_round = int(saved_round)
+                    except (ValueError, TypeError):
+                        pass
+            else:
+                return False
+
+            # Convert to numpy
+            weights_np = [np.array(w) for w in weights]
+
+            # Update local model
+            self.model.set_weights(weights_np)
+
+            logger.info(f"📥 Received weights for round {self.training_round}")
+            return True
         except Exception as e:
             logger.warning(f"Failed to receive weights for client {self.client_id}: {e}")
 
@@ -189,6 +241,11 @@ class FederatedClient:
                 'weights': weights_serialized,
             }
             weights_json = json.dumps(payload)
+
+            if not self.cipher:
+                if not self.refresh_encryption_key():
+                    logger.error(f"Failed to send update for client {self.client_id}: cipher not initialized")
+                    return {'success': False, 'error': 'Encryption cipher unavailable'}
 
             # Encrypt
             encrypted = self.cipher.encrypt(weights_json.encode())
