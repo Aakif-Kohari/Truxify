@@ -108,7 +108,21 @@ class GraphNetworkBuilder:
         self.edge_features = {}
         
     def build_road_network(self, nodes, edges):
-        """Build road network from nodes and edges"""
+        """Build a road network after validating every edge endpoint."""
+        node_ids = {node['id'] for node in nodes}
+
+        # Validate all endpoints before mutating the graph so invalid input
+        # cannot create implicit NetworkX nodes or leave a partial build.
+        for edge in edges:
+            source = edge['source']
+            target = edge['target']
+            missing_endpoints = [
+                node_id for node_id in (source, target) if node_id not in node_ids
+            ]
+            if missing_endpoints:
+                missing = ', '.join(dict.fromkeys(missing_endpoints))
+                raise ValueError(f"Unknown edge endpoint(s): {missing}")
+
         # Add nodes
         for node in nodes:
             self.graph.add_node(
