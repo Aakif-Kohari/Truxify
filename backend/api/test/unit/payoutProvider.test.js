@@ -2,10 +2,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   isPayoutProviderConfigured,
   dispatchPayout,
+  getPayoutRecord,
+  getPayoutStatus,
+  getPayoutById,
+  getPayout,
+  fetchPayout,
+  fetchPayoutRecord,
 } from '../../src/services/wallet/payoutProvider.js'
 
 vi.mock('../../src/middleware/logger.js', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}))
+
+vi.mock('../../src/config/db.js', () => ({
+  supabase: null,
+  supabaseAdmin: null,
 }))
 
 describe('payoutProvider', () => {
@@ -106,5 +117,128 @@ describe('payoutProvider', () => {
       .resolves.toMatchObject({ success: true })
     expect(mockFetch.mock.calls[0][1].signal.aborted).toBe(false)
     vi.unstubAllGlobals()
+  })
+
+  describe('Null Guard for Supabase Payout Response', () => {
+    it('returns { error: "Payout record not found" } when payoutId is null or missing', async () => {
+      const result = await getPayoutRecord(null)
+      expect(result).toEqual({ error: 'Payout record not found' })
+      expect(result.id).toBeUndefined()
+      expect(result.status).toBeUndefined()
+    })
+
+    it('returns { error: "Payout record not found" } when database client is unavailable', async () => {
+      const result = await getPayoutRecord('payout-123', null)
+      expect(result).toEqual({ error: 'Payout record not found' })
+    })
+
+    it('returns { error: "Payout record not found" } when maybeSingle() resolves to null data', async () => {
+      const mockClient = {
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      }
+
+      const result = await getPayoutRecord('non-existent-id', mockClient)
+      expect(result).toEqual({ error: 'Payout record not found' })
+      // Verify safe property access without TypeError
+      expect(result.id).toBeUndefined()
+      expect(result.status).toBeUndefined()
+    })
+
+    it('returns { error: "Payout record not found" } when maybeSingle() returns an error', async () => {
+      const mockClient = {
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'PGRST116: JSON object requested, multiple (or no) rows returned' } }),
+        }),
+      }
+
+      const result = await getPayoutRecord('err-id', mockClient)
+      expect(result).toEqual({ error: 'Payout record not found' })
+    })
+
+    it('returns { error: "Payout record not found" } when underlying database call throws an exception', async () => {
+      const mockClient = {
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockRejectedValue(new Error('Connection closed')),
+        }),
+      }
+
+      const result = await getPayoutRecord('throw-id', mockClient)
+      expect(result).toEqual({ error: 'Payout record not found' })
+    })
+
+    it('returns the payout record when successfully found in payouts table', async () => {
+      const mockRecord = { id: 'payout-123', status: 'settled', amount: 1500, driver_id: 'driver-99' }
+      const mockClient = {
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: mockRecord, error: null }),
+        }),
+      }
+
+      const result = await getPayoutRecord('payout-123', mockClient)
+      expect(result).toEqual(mockRecord)
+      expect(result.id).toBe('payout-123')
+      expect(result.status).toBe('settled')
+    })
+
+    it('falls back to wallet_transactions and returns record when found', async () => {
+      const mockTxRecord = { id: 'w-456', status: 'completed', amount: 2000 }
+      const mockClient = {
+        from: vi.fn()
+          .mockReturnValueOnce({
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValueOnce({ data: null, error: null }),
+          })
+          .mockReturnValueOnce({
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValueOnce({ data: mockTxRecord, error: null }),
+          }),
+      }
+
+      const result = await getPayoutRecord('w-456', mockClient)
+      expect(result).toEqual(mockTxRecord)
+      expect(result.id).toBe('w-456')
+      expect(result.status).toBe('completed')
+    })
+
+    it('getPayoutStatus guards against null and returns structured error', async () => {
+      const mockClient = {
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      }
+
+      const result = await getPayoutStatus('missing-id', mockClient)
+      expect(result).toEqual({ error: 'Payout record not found' })
+      expect(result.status).toBeUndefined()
+    })
+
+    it('getPayoutById, getPayout, fetchPayout, fetchPayoutRecord provide consistent null-safe responses', async () => {
+      const mockClient = {
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      }
+
+      expect(await getPayoutById('missing', mockClient)).toEqual({ error: 'Payout record not found' })
+      expect(await getPayout('missing', mockClient)).toEqual({ error: 'Payout record not found' })
+      expect(await fetchPayout('missing', mockClient)).toEqual({ error: 'Payout record not found' })
+      expect(await fetchPayoutRecord('missing', mockClient)).toEqual({ error: 'Payout record not found' })
+    })
   })
 })
