@@ -3,6 +3,7 @@ import logger from '../../api/src/middleware/logger.js';
 import eventRepository from '../repositories/event.repository.js';
 import {
   ORDER_READ_MODEL_TABLE,
+  ORDER_STATUSES,
   assertOrderReadModelRow,
   deriveOrderStatus,
   deriveEventTypeFromTimeline,
@@ -207,6 +208,7 @@ class OrderReadModel {
       .upsert([{
         order_id: orderId,
         payload: snapshot.data || {},
+        status: snapshot.status ?? deriveOrderStatus(snapshot.data),
         event_type: snapshot.eventType || 'ORDER_UPDATED',
         version: snapshot.version ?? null,
         updated_at: new Date().toISOString(),
@@ -289,7 +291,7 @@ class OrderReadModel {
         .select('*');
 
       if (filters.status) {
-        query = query.eq('payload->>status', filters.status);
+        query = query.eq('status', filters.status);
       }
       if (filters.customerId) {
         query = query.eq('payload->>customer_id', filters.customerId);
@@ -342,14 +344,13 @@ class OrderReadModel {
    * single authoritative read model.
    */
   async getOrderStats() {
-    const statuses = ['pending', 'truck_assigned', 'en_route_pickup', 'arrived_pickup', 'picked_up', 'in_transit', 'arriving', 'delivered', 'payment_released', 'cancelled'];
     const stats = {};
 
-    for (const status of statuses) {
+    for (const status of ORDER_STATUSES) {
       const { count, error } = await this.client
         .from(ORDER_READ_MODEL_TABLE)
         .select('*', { count: 'exact', head: true })
-        .eq('payload->>status', status);
+        .eq('status', status);
 
       if (error) throw error;
       stats[status] = count ?? 0;

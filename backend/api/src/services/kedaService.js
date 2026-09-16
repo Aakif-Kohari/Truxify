@@ -128,7 +128,7 @@ class KEDAService {
         const interval = Number(options.intervalMs) || this.kedaPollInterval;
         const timeout = Number(options.timeoutMs) || this.kedaPollTimeout;
         const startedAt = Date.now();
-        let latestResult = null;
+        let latestResult;
 
         do {
             latestResult = await this.getScaledObjectStatus(namespace, scaledObjectName);
@@ -142,6 +142,11 @@ class KEDAService {
 
             await new Promise(resolve => setTimeout(resolve, interval));
         } while (Date.now() - startedAt < timeout);
+
+        logger.warn(
+            { namespace, scaledObjectName, timeoutMs: timeout },
+            'Timed out waiting for KEDA scaled object status',
+        );
 
         return {
             ...(latestResult || {
