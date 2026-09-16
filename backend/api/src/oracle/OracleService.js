@@ -23,6 +23,8 @@ class OracleService {
   constructor(deps = {}) {
     this.orderRepository = deps.orderRepository || null;
     this.supabase = deps.supabase || supabase;
+    this.chainlinkRpcUrl = deps.chainlinkRpcUrl || process.env.CHAINLINK_RPC_URL || null;
+    this.defaultGasPriceGwei = deps.defaultGasPriceGwei || (process.env.DEFAULT_GAS_PRICE_GWEI ? Number(process.env.DEFAULT_GAS_PRICE_GWEI) : 30);
   }
 
   getStatus() {
@@ -286,6 +288,57 @@ class OracleService {
     }
   }
 
+  async getPriceFeed(pair = 'MATIC/USD', options = {}) {
+    const defaultPrices = {
+      'MATIC/USD': 0.75,
+      'ETH/USD': 3000.0,
+      'USDC/USD': 1.0,
+      'FUEL/USD': 3.90,
+    };
+
+    const normalizedPair = String(pair).toUpperCase().trim();
+    const fallbackPrice = options.fallbackPrice ?? defaultPrices[normalizedPair] ?? 1.0;
+
+    // Check environment override
+    const envKey = `ORACLE_PRICE_${normalizedPair.replace(/[^A-Z0-9]/g, '_')}`;
+    const envPrice = process.env[envKey];
+    if (envPrice && Number.isFinite(Number(envPrice)) && Number(envPrice) > 0) {
+      return {
+        pair: normalizedPair,
+        price: Number(envPrice),
+        source: 'env_override',
+        fallback: false,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    if (process.env.CHAINLINK_ENABLED === 'true' && (options.fetchPriceFn || options.rpcUrl || this.chainlinkRpcUrl)) {
+      try {
+        if (options.fetchPriceFn) {
+          const fetched = await options.fetchPriceFn(normalizedPair);
+          if (Number.isFinite(fetched) && fetched > 0) {
+            return {
+              pair: normalizedPair,
+              price: fetched,
+              source: 'chainlink',
+              fallback: false,
+              timestamp: new Date().toISOString(),
+            };
+          }
+        }
+      } catch (err) {
+        logger.warn({ pair: normalizedPair, err: err?.message || String(err) }, '[OracleService] Failed to fetch live price feed, using fallback');
+      }
+    }
+
+    return {
+      pair: normalizedPair,
+      price: fallbackPrice,
+      source: 'fallback',
+      fallback: true,
+      timestamp: new Date().toISOString(),
+    };
+  }
 }
 
 export default OracleService;
