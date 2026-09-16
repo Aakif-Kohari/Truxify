@@ -6,8 +6,7 @@ import subprocess
 import sys
 import unittest
 import pytest
-from sse_engine import SymmetricSearchableEncryptionEngine
-from backend.crypto.sse_engine import gc_inverted_index
+from sse_engine import SymmetricSearchableEncryptionEngine, gc_inverted_index
 
 
 class TestSSE(unittest.TestCase):
