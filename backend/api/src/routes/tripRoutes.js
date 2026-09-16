@@ -77,7 +77,7 @@ import { supabase, supabaseAdmin } from '../config/db.js';
 import { authenticate } from '../middleware/auth.js';
 import { userLimiter } from '../middleware/rateLimiter.js';
 import { validateParams } from '../middleware/validate.js';
-import { uuidParamSchema } from '../validation/requestSchemas.js';
+import { confirmStopSchema, uuidParamSchema } from '../validation/requestSchemas.js';
 import logger from '../middleware/logger.js';
 
 const router = express.Router();
@@ -992,11 +992,9 @@ router.put('/:id/stops/:stopId/complete', authenticate, userLimiter, async (req,
 router.post('/:id/confirm-stop', authenticate, userLimiter, async (req, res) => {
   try {
     const { stopId, otp } = req.body || {};
-    if (!stopId || typeof stopId !== 'string') {
-      return res.status(400).json({ error: 'stopId is required.' });
-    }
-    if (!otp || typeof otp !== 'string' || otp.trim().length !== 6) {
-      return res.status(400).json({ error: 'A valid 6-digit OTP is required.' });
+    const parsedBody = confirmStopSchema.safeParse({ stopId, otp });
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: parsedBody.error.issues[0]?.message || 'Invalid confirmation payload.' });
     }
 
     const ctx = await findTripContext(req.params.id);
@@ -1015,8 +1013,8 @@ router.post('/:id/confirm-stop', authenticate, userLimiter, async (req, res) => 
     if (!stop) return res.status(404).json({ error: 'Stop not found on this trip.' });
     if (stop.is_completed) return res.status(409).json({ error: 'Stop has already been confirmed.' });
 
-    // Validate OTP against linked order or default mock OTP (123456)
-    let expectedOtp = '123456';
+    // Validate only against the OTP issued for the linked order.
+    let expectedOtp = null;
     if (owned.trip.order_id) {
       const { data: linkedOrder } = await supabaseAdmin
         .from('orders')
@@ -1029,7 +1027,7 @@ router.post('/:id/confirm-stop', authenticate, userLimiter, async (req, res) => 
     }
 
     const cleanedSubmittedOtp = otp.trim();
-    if (cleanedSubmittedOtp !== expectedOtp && cleanedSubmittedOtp !== '123456') {
+    if (!expectedOtp || cleanedSubmittedOtp !== expectedOtp) {
       return res.status(400).json({ error: 'Invalid delivery OTP provided.' });
     }
 

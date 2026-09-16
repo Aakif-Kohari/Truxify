@@ -100,7 +100,7 @@ contract ZKPrivacy is Ownable, ReentrancyGuard, Pausable {
     function getDriverAverageRating(address _driver) external view returns (uint256 averageScaled) {
         RatingStats memory stats = driverRatings[_driver];
         if (stats.totalRatings == 0) return 0;
-        return (stats.totalStars * 100) / stats.totalRatings;
+        return (stats.totalStars * 100) / stats.totalRatings; // Scaled by 100 (e.g. 480 = 4.80 stars)
     }
 
     // ============ Merkle Tree ============
@@ -110,7 +110,7 @@ contract ZKPrivacy is Ownable, ReentrancyGuard, Pausable {
         merkleTree.nextIndex = 0;
         merkleTree.levels = new bytes32[](MERKLE_DEPTH + 1);
         merkleTree.levels[0] = bytes32(0);
-
+        
         for (uint256 i = 1; i <= MERKLE_DEPTH; i++) {
             merkleTree.levels[i] = keccak256(abi.encodePacked(merkleTree.levels[i-1], merkleTree.levels[i-1]));
         }
@@ -152,14 +152,14 @@ contract ZKPrivacy is Ownable, ReentrancyGuard, Pausable {
         uint[] memory input
     ) external whenNotPaused returns (bool) {
         require(verifier != address(0), "Verifier not set");
-
+        
         bool isValid = IVerifier(verifier).verifyProof(a, b, c, input);
-
+        
         if (isValid) {
             bytes32 transactionId = keccak256(abi.encodePacked(block.timestamp, msg.sender));
             emit ProofVerified(transactionId, true);
         }
-
+        
         return isValid;
     }
 
@@ -191,18 +191,22 @@ contract ZKPrivacy is Ownable, ReentrancyGuard, Pausable {
         require(recipient != address(0), "Invalid recipient");
         require(amount > 0, "Amount must be > 0");
 
+        // Verify zk-SNARK proof inputs match transaction parameters
         require(proof.input.length >= 4, "Invalid proof public inputs length");
         require(proof.input[0] == uint256(nullifier), "Nullifier mismatch in proof input");
         require(proof.input[1] == uint256(commitment), "Commitment mismatch in proof input");
         require(proof.input[2] == uint256(uint160(recipient)), "Recipient mismatch in proof input");
         require(proof.input[3] == amount, "Amount mismatch in proof input");
 
+        // Verify zk-SNARK proof
         bool isValid = IVerifier(verifier).verifyProof(proof.a, proof.b, proof.c, proof.input);
         require(isValid, "Invalid proof");
 
+        // Transfer payout to recipient
         (bool success, ) = recipient.call{value: amount}("");
         require(success, "Transfer failed");
 
+        // Store transaction
         transactionCounter++;
         bytes32 txId = keccak256(abi.encodePacked(block.timestamp, transactionCounter));
 
@@ -226,6 +230,9 @@ contract ZKPrivacy is Ownable, ReentrancyGuard, Pausable {
 
     // ============ zk-STARKs Transparent ============
 
+    // `public` rather than `external`: processSTARKTransaction calls this
+    // internally, and Solidity cannot resolve an external function by plain
+    // name.
     function verifySTARK(
         uint[2] memory a,
         uint[2][2] memory b,
@@ -249,6 +256,10 @@ contract ZKPrivacy is Ownable, ReentrancyGuard, Pausable {
         require(recipient != address(0), "Invalid recipient");
         require(amount > 0, "Amount must be > 0");
 
+        // Bind the withdrawal to a real on-chain deposit ledger and consume a
+        // one-time nullifier so the same proof cannot be replayed to drain the
+        // contract. Without these checks the caller-chosen `amount` is paid
+        // straight out of the contract balance regardless of any deposit.
         require(!nullifiers[nullifier], "Nullifier already used");
         require(commitments[commitment], "Commitment does not exist");
         require(!spentCommitments[commitment], "Commitment already spent");
@@ -260,12 +271,15 @@ contract ZKPrivacy is Ownable, ReentrancyGuard, Pausable {
         require(publicInputs[2] == uint256(uint160(recipient)), "Recipient mismatch in proof input");
         require(publicInputs[3] == amount, "Amount mismatch in proof input");
 
+        // Verify zk-STARK proof
         bool isValid = verifySTARK(a, b, c, publicInputs);
         require(isValid, "Invalid STARK proof");
 
+        // Transfer payout to recipient
         (bool success, ) = recipient.call{value: amount}("");
         require(success, "Transfer failed");
 
+        // Record the withdrawal against the deposit ledger.
         transactionCounter++;
         bytes32 txId = keccak256(abi.encodePacked(block.timestamp, transactionCounter));
 
@@ -298,10 +312,8 @@ contract ZKPrivacy is Ownable, ReentrancyGuard, Pausable {
         require(amount > 0, "Amount must be > 0");
         require(msg.value == amount, "Funding amount must equal transaction amount");
 
-        // Generate commitment and nullifier from the same transaction context
-        // used to identify the private transfer, then bind that commitment to
-        // the ETH supplied in this call so it can be spent through the normal
-        // proof-verified withdrawal path.
+        // Generate commitment and nullifier from the transaction context used
+        // to identify the private transfer, then bind it to the supplied funds.
         bytes32 commitment = keccak256(abi.encodePacked(block.timestamp, msg.sender, amount));
         bytes32 nullifier = keccak256(abi.encodePacked(commitment, block.timestamp));
         require(!commitments[commitment], "Commitment already exists");
