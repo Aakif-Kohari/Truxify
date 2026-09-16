@@ -357,7 +357,7 @@ router.post("/verify-otp", otpVerificationLimiter, async (req, res) => {
   }
 });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'truxify-jwt-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
  * @openapi
@@ -481,6 +481,11 @@ router.post("/verify", async (req, res) => {
 
     if (!userId) {
       userId = `usr-${verifiedUid.slice(-8)}`;
+    }
+
+    if (!JWT_SECRET) {
+      logger.error('[auth/verify] JWT_SECRET is not configured');
+      return res.status(503).json({ success: false, error: 'Authentication service is temporarily unavailable.' });
     }
 
     const backendJwt = jwt.sign(
