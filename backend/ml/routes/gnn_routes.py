@@ -16,6 +16,37 @@ router = APIRouter(prefix="/gnn", tags=["Graph Neural Networks"])
 builder = GraphNetworkBuilder()
 optimizer = RouteOptimizer()
 
+SUPPORTED_ROUTE_OBJECTIVES = frozenset({
+    "time",
+    "cost",
+    "fuel",
+    "distance",
+    "congestion",
+})
+
+
+def validate_route_objectives(objectives):
+    """Validate that every requested route objective is supported."""
+    if objectives is None:
+        return
+
+    invalid_objectives = []
+    for objective in objectives:
+        if not isinstance(objective, str) or objective not in SUPPORTED_ROUTE_OBJECTIVES:
+            if objective not in invalid_objectives:
+                invalid_objectives.append(objective)
+
+    if invalid_objectives:
+        invalid = ", ".join(repr(objective) for objective in invalid_objectives)
+        supported = ", ".join(sorted(SUPPORTED_ROUTE_OBJECTIVES))
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unsupported route objective(s): {invalid}. "
+                f"Supported objectives: {supported}."
+            ),
+        )
+
 class Node(BaseModel):
     id: str
     lat: float
@@ -75,6 +106,7 @@ async def build_graph(nodes: List[Node], edges: List[Edge]):
 @router.post("/optimize-route")
 async def optimize_route(request: RouteRequest):
     """Optimize route using GNN"""
+    validate_route_objectives(request.objectives)
     try:
         # Build graph
         graph = builder.build_road_network(
@@ -115,6 +147,7 @@ async def optimize_route(request: RouteRequest):
 @router.post("/multi-objective")
 async def multi_objective_optimize(request: RouteRequest):
     """Multi-objective route optimization"""
+    validate_route_objectives(request.objectives)
     try:
         # Build graph
         graph = builder.build_road_network(
