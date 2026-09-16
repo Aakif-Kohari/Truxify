@@ -15,6 +15,15 @@
 
 import logger from '../middleware/logger.js';
 import { redisClient } from '../config/db.js';
+import { CircuitBreaker, CircuitState } from '../lib/circuitBreaker.js';
+
+export { CircuitBreaker, CircuitState };
+
+export const escrowBreaker = new CircuitBreaker('escrow', {
+  failureThreshold: 3,
+  resetTimeoutMs: 10000,
+  requestTimeoutMs: 5000,
+});
 
 const PAUSE_KEY = 'escrow:circuit-breaker:paused';
 const PAUSED_AT_KEY = 'escrow:circuit-breaker:paused-at';

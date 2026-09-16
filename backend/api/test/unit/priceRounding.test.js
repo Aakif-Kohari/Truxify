@@ -15,11 +15,12 @@ describe('priceRounding', () => {
       expect(toPaisa(0.99)).toBe(99);
     });
 
-    it('rounds to nearest paisa', () => {
-      // Use values that don't suffer from floating-point precision issues
+    it('floors fractional paisa without rounding upward', () => {
+      // Fractional paisa is always floored down
       expect(toPaisa(1.5)).toBe(150);
       expect(toPaisa(1.49)).toBe(149);
       expect(toPaisa(1.994)).toBe(199);
+      expect(toPaisa(1.996)).toBe(199);
     });
 
     it('returns null for invalid inputs', () => {

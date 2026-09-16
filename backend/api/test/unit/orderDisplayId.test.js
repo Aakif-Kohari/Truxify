@@ -123,7 +123,7 @@ describe('OrderDisplayId Comprehensive Enterprise Suite (Issue #14101)', () => {
     });
   });
 
-  describe('validateDisplayIdBatch (Bulk Validation Extension)', () => {
+describe('validateDisplayIdBatch (Bulk Validation Extension)', () => {
     it('validates array of IDs and returns accurate summary counts', () => {
       const validId = generateOrderDisplayId();
       const arr = [validId, '#FFINVALID123456', 'bad-id'];
@@ -151,8 +151,6 @@ describe('OrderDisplayId Comprehensive Enterprise Suite (Issue #14101)', () => {
     });
   });
 
-
-
   describe('parseAndValidateEscrowReference (Advanced Blockchain Extension)', () => {
     it('correctly parses and validates a valid escrow reference string', () => {
       const id = '#FF20260802K9X2Q7Z4M1A3';
@@ -171,4 +169,27 @@ describe('OrderDisplayId Comprehensive Enterprise Suite (Issue #14101)', () => {
     });
   });
 
+  it('parseDisplayId extracts date from valid id', () => {
+    const result = parseDisplayId('#FF202608021234567890AB');
+    expect(result.valid).toBe(true);
+    expect(result.displayId).toBe('#FF202608021234567890AB');
+  });
+
+  it('parseDisplayId returns valid: false with error for null and undefined input', () => {
+    const resultNull = parseDisplayId(null);
+    expect(resultNull.valid).toBe(false);
+    expect(resultNull.error).toBe('null input');
+
+    const resultUndef = parseDisplayId(undefined);
+    expect(resultUndef.valid).toBe(false);
+    expect(resultUndef.error).toBe('null input');
+  });
+
+ it('parseDisplayId returns valid: false for non-string input', () => {
+    const result = parseDisplayId(12345);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('expected string');
+  });
 });
+
+

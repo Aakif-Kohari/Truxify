@@ -14,6 +14,8 @@ const DELIVERY_IN_PROGRESS_STATUSES = new Set([
   'arriving',
 ]);
 
+const BLOCKCHAIN_TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+
 export const ORACLE_PROVIDER_COUNT = 3;
 export const ORACLE_THRESHOLD = 2;
 
@@ -24,9 +26,27 @@ class OracleService {
   }
 
   getStatus() {
+    const chainlinkEnabled = process.env.CHAINLINK_ENABLED === 'true';
+    const backupOracleEnabled = process.env.BACKUP_ORACLE_ENABLED === 'true';
+
+    // Parsed threshold falls back to the module default (ORACLE_THRESHOLD)
+    // if the env var is unset or not a valid positive integer.
+    const parsedThreshold = Number.parseInt(process.env.ORACLE_CONSENSUS_THRESHOLD, 10);
+    const threshold = Number.isInteger(parsedThreshold) && parsedThreshold > 0
+      ? parsedThreshold
+      : ORACLE_THRESHOLD;
+
+    // Core providers (OTP, GPS, order-status) are always active. Chainlink
+    // and the backup oracle are optional and toggled via env config.
+    const activeProviders = ORACLE_PROVIDER_COUNT
+      + (chainlinkEnabled ? 1 : 0)
+      + (backupOracleEnabled ? 1 : 0);
+
     return {
-      providers: 3,
-      threshold: 2,
+      providers: activeProviders,
+      threshold,
+      chainlinkEnabled,
+      backupOracleEnabled,
       timestamp: new Date().toISOString(),
     };
   }
@@ -215,6 +235,20 @@ class OracleService {
   }
 
   async verifyCrossChain(orderId, blockchainHash) {
+    // Keep validation at the service boundary as well as at the HTTP/schema
+    // boundary. This protects internal callers from accidentally forwarding an
+    // arbitrary value to downstream blockchain/RPC code in future revisions.
+    if (typeof blockchainHash !== 'string' || !BLOCKCHAIN_TX_HASH_RE.test(blockchainHash)) {
+      return {
+        verified: false,
+        ipfsHash: null,
+        blockchainHash: typeof blockchainHash === 'string' ? blockchainHash : null,
+        verificationUrl: null,
+        error: 'Invalid blockchain transaction hash',
+        code: 'INVALID_BLOCKCHAIN_HASH',
+      };
+    }
+
     try {
       const { data: order, error } = await this.supabase
         .from('orders')
