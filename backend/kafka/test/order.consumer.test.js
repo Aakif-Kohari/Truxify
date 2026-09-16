@@ -54,6 +54,7 @@ const {
   storeMock,
   listPendingMock,
   markStatusMock,
+  getStatusMock,
 } = vi.hoisted(() => ({
   applyEventMock: vi.fn(),
   claimProcessingMock: vi.fn(),
@@ -62,6 +63,7 @@ const {
   storeMock: vi.fn().mockResolvedValue({ id: 'dlq-1' }),
   listPendingMock: vi.fn().mockResolvedValue([]),
   markStatusMock: vi.fn().mockResolvedValue(),
+  getStatusMock: vi.fn().mockResolvedValue('completed'),
 }));
 
 vi.mock('../cqrs/order.read.model.js', () => ({
@@ -75,6 +77,7 @@ vi.mock('../repositories/processedEvent.repository.js', () => ({
     claimProcessing: claimProcessingMock,
     markCompleted: markCompletedMock,
     markFailed: markFailedMock,
+    getStatus: getStatusMock,
   },
 }));
 
@@ -248,5 +251,182 @@ describe('OrderConsumer side-effect topics', () => {
     expect(claimProcessingMock).not.toHaveBeenCalled();
     expect(markCompletedMock).not.toHaveBeenCalled();
     expect(markFailedMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrderConsumer replayDeadLetters idempotency (Issue #11218)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    orderConsumer.handlers.clear();
+    orderConsumer.setEventBus(null);
+    listPendingMock.mockResolvedValue([]);
+    markStatusMock.mockResolvedValue();
+    claimProcessingMock.mockResolvedValue(true);
+    markCompletedMock.mockResolvedValue();
+    markFailedMock.mockResolvedValue();
+    getStatusMock.mockResolvedValue('completed');
+    applyEventMock.mockResolvedValue(true);
+  });
+
+  it('skips handler and marks replayed when side-effect event was already completed', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-1',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-dlq-1' }, orderId: ORDER_ID }),
+        retry_count: 0,
+      },
+    ]);
+    claimProcessingMock.mockResolvedValueOnce(false);
+    getStatusMock.mockResolvedValueOnce('completed');
+
+    const handler = vi.fn();
+    orderConsumer.registerHandler('payment.confirmed', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(claimProcessingMock).toHaveBeenCalledWith('payment.confirmed', 'evt-dlq-1', ORDER_ID, 'order-service');
+    expect(getStatusMock).toHaveBeenCalledWith('payment.confirmed', 'evt-dlq-1', 'order-service');
+    expect(handler).not.toHaveBeenCalled();
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-1', 'replayed');
+    expect(markCompletedMock).not.toHaveBeenCalled();
+    expect(markFailedMock).not.toHaveBeenCalled();
+    expect(res.succeeded).toBe(1);
+    expect(res.failed).toBe(0);
+  });
+
+  it('skips handler and leaves pending when side-effect event is actively in-flight on another replica', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-2',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-dlq-2' }, orderId: ORDER_ID }),
+        retry_count: 0,
+      },
+    ]);
+    claimProcessingMock.mockResolvedValueOnce(false);
+    getStatusMock.mockResolvedValueOnce('processing');
+
+    const handler = vi.fn();
+    orderConsumer.registerHandler('payment.confirmed', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(claimProcessingMock).toHaveBeenCalledWith('payment.confirmed', 'evt-dlq-2', ORDER_ID, 'order-service');
+    expect(handler).not.toHaveBeenCalled();
+    expect(markStatusMock).not.toHaveBeenCalled();
+    expect(res.failed).toBe(1);
+    expect(res.succeeded).toBe(0);
+  });
+
+  it('claims, executes handler, and marks completed for a retryable/fresh side-effect event', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-3',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-dlq-3' }, orderId: ORDER_ID }),
+        retry_count: 0,
+      },
+    ]);
+    claimProcessingMock.mockResolvedValueOnce(true);
+
+    const handler = vi.fn().mockResolvedValue();
+    orderConsumer.registerHandler('payment.confirmed', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(claimProcessingMock).toHaveBeenCalledWith('payment.confirmed', 'evt-dlq-3', ORDER_ID, 'order-service');
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-3', 'replayed');
+    expect(markCompletedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-dlq-3', 'order-service');
+    expect(markFailedMock).not.toHaveBeenCalled();
+    expect(res.succeeded).toBe(1);
+    expect(res.failed).toBe(0);
+  });
+
+  it('marks failed and increments retry count when handler throws during replay of claimed event', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-4',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-dlq-4' }, orderId: ORDER_ID }),
+        retry_count: 1,
+      },
+    ]);
+    claimProcessingMock.mockResolvedValueOnce(true);
+
+    const handler = vi.fn().mockRejectedValue(new Error('wallet service timeout'));
+    orderConsumer.registerHandler('payment.confirmed', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(markFailedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-dlq-4', 'order-service');
+    expect(markCompletedMock).not.toHaveBeenCalled();
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-4', 'pending', { incrementRetry: true });
+    expect(res.failed).toBe(1);
+    expect(res.succeeded).toBe(0);
+  });
+
+  it('marks failed permanently when handler fails and MAX_REPLAY_ATTEMPTS is reached', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-5',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-dlq-5' }, orderId: ORDER_ID }),
+        retry_count: 3,
+      },
+    ]);
+    claimProcessingMock.mockResolvedValueOnce(true);
+
+    const handler = vi.fn().mockRejectedValue(new Error('persistent failure'));
+    orderConsumer.registerHandler('payment.confirmed', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(markFailedMock).toHaveBeenCalledWith('payment.confirmed', 'evt-dlq-5', 'order-service');
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-5', 'failed');
+    expect(res.failed).toBe(1);
+  });
+
+  it('skips handler and marks replayed for an already-applied read-model event', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-6',
+        topic: 'order.created',
+        message: JSON.stringify(orderEventMessage({ eventId: 'evt-dlq-6' })),
+        retry_count: 0,
+      },
+    ]);
+    applyEventMock.mockResolvedValueOnce(false);
+
+    const handler = vi.fn();
+    orderConsumer.registerHandler('order.created', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(applyEventMock).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-6', 'replayed');
+    expect(res.succeeded).toBe(1);
+    expect(res.failed).toBe(0);
+  });
+
+  it('handles invalid JSON in DLQ entry gracefully', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-7',
+        topic: 'payment.confirmed',
+        message: 'invalid-non-json-content',
+        retry_count: 0,
+      },
+    ]);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-7', 'pending', { incrementRetry: true });
+    expect(res.failed).toBe(1);
+    expect(res.succeeded).toBe(0);
   });
 });
