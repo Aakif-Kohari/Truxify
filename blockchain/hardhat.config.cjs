@@ -1,3 +1,8 @@
+const { subtask } = require("hardhat/config");
+const { TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS } = require("hardhat/builtin-tasks/task-names");
+const fs = require("fs");
+const path = require("path");
+
 require("@nomicfoundation/hardhat-ethers");
 require("@nomicfoundation/hardhat-chai-matchers");
 require("@nomicfoundation/hardhat-network-helpers");
@@ -10,17 +15,16 @@ const POLYGONSCAN_API_KEY = process.env.POLYGONSCAN_API_KEY || "";
 
 function validatePrivateKey(key) {
   if (!key || key.length === 0) return false;
-  if (!/^0x[a-fA-F0-9]{64}$/.test(key)) return false;
-  return true;
+  return /^0x[a-fA-F0-9]{64}$/.test(key);
 }
 
 function sanitizeRpcUrl(url) {
-  if (!url || typeof url !== 'string') return '';
+  if (!url || typeof url !== "string") return "";
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : '';
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? url : "";
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -31,6 +35,22 @@ function getNetworkConfig(name, url, chainId, privateKey) {
     chainId,
   };
 }
+
+subtask(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS).setAction(async (_, { run }) => {
+  const sourcePaths = await run(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS);
+
+  // A handful of repository Solidity sources are committed with a UTF-8 BOM.
+  // Solidity rejects that marker at byte zero, so normalize only those source
+  // files before Hardhat builds its dependency graph.
+  for (const sourcePath of sourcePaths) {
+    const content = fs.readFileSync(sourcePath, "utf8");
+    if (content.charCodeAt(0) === 0xfeff) {
+      fs.writeFileSync(sourcePath, content.slice(1), "utf8");
+    }
+  }
+
+  return sourcePaths;
+});
 
 module.exports = {
   solidity: {
