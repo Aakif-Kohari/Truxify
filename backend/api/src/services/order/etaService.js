@@ -130,6 +130,8 @@ export async function calculateRouteEta({ originLat, originLng, destLat, destLng
 
     const trafficMultiplier = await getLiveTrafficMultiplier(originLat, originLng);
     const adjustedSeconds = routeEstimate.durationSeconds * trafficMultiplier;
+    const safeDurationSeconds = Math.max(0, adjustedSeconds);
+    const arrivalDate = new Date(Date.now() + safeDurationSeconds * 1000);
     const arrivalDate = new Date(Date.now() + adjustedSeconds * 1000);
     const etaText = formatEtaDisplay(arrivalDate);
 
@@ -138,6 +140,7 @@ export async function calculateRouteEta({ originLat, originLng, destLat, destLng
     return {
       etaText,
       arrivalEpochMs: arrivalDate.getTime(),
+      durationSeconds: safeDurationSeconds,
       durationSeconds: adjustedSeconds,
     };
   } catch (err) {
