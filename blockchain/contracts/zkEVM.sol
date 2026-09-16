@@ -61,6 +61,7 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
 
     // Verifier
     address public verifier;
+    address public bridge;
 
     // Constants
     uint256 public constant MAX_BATCH_SIZE = 1000;
@@ -173,6 +174,16 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
         emit BridgeDeposit(msg.sender, msg.value);
     }
 
+    /// @notice Records a bridge deposit for the original user address.
+    /// @dev Only the configured bridge may call this overload.
+    /// @param user The user whose L2 balance should receive the deposited value.
+    function depositToL2(address user) external payable onlyBridge whenNotPaused {
+        require(user != address(0), "Invalid user");
+        require(msg.value > 0, "Amount must be > 0");
+        currentState.balances[user] += msg.value;
+        emit BridgeDeposit(user, msg.value);
+    }
+
     function withdrawFromL2(
         uint256 amount,
         bytes calldata proof
@@ -185,6 +196,27 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
         currentState.balances[msg.sender] -= amount;
         payable(msg.sender).transfer(amount);
         emit BridgeWithdraw(msg.sender, amount);
+    }
+
+    /// @notice Withdraws for a bridge user while preserving the user's identity in proof validation.
+    /// @dev Only the configured bridge may call this overload; funds are returned to the bridge for queuing.
+    /// @param user The original user whose L2 balance is being withdrawn.
+    /// @param amount The withdrawal amount.
+    /// @param proof The ZK proof whose public inputs must bind to `user` and `amount`.
+    function withdrawFromL2(
+        address user,
+        uint256 amount,
+        bytes calldata proof
+    ) external onlyBridge whenNotPaused {
+        require(user != address(0), "Invalid user");
+        require(amount > 0, "Amount must be > 0");
+        require(currentState.balances[user] >= amount, "Insufficient balance");
+
+        require(_verifyProof(proof, user, amount), "Invalid proof");
+
+        currentState.balances[user] -= amount;
+        payable(msg.sender).transfer(amount);
+        emit BridgeWithdraw(user, amount);
     }
 
     // ============ View Functions ============
@@ -227,6 +259,13 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
         verifier = newVerifier;
     }
 
+    /// @notice Configures the bridge contract allowed to act on behalf of users.
+    /// @param newBridge The deployed bridge contract address.
+    function setBridge(address newBridge) external onlyOwner {
+        require(newBridge != address(0), "Invalid bridge");
+        bridge = newBridge;
+    }
+
     function pause() external onlyOwner {
         _pause();
     }
@@ -243,6 +282,11 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ============ Internal Functions ============
+
+    modifier onlyBridge() {
+        require(msg.sender == bridge, "zkEVM: caller is not bridge");
+        _;
+    }
 
     /**
      * @dev Apply a single transaction with the full signature/nonce/balance
@@ -315,6 +359,8 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
         return keccak256(abi.encodePacked(block.chainid, address(this), from, to, value, data, nonce, gasPrice, gasLimit));
     }
 
+    /// @dev Verifies an unbound proof used by batch execution.
+    ///      Withdrawal proofs must use the recipient/amount-bound overload below.
     function _verifyProof(bytes calldata proof) internal view returns (bool) {
         require(verifier != address(0), "zkEVM: verifier not configured");
         require(proof.length > 0, "Empty proof");
@@ -323,6 +369,10 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
         return IVerifier(verifier).verifyProof(a, b, c, input);
     }
 
+    /// @dev Verifies a withdrawal proof and binds its public inputs to the expected user and amount.
+    /// @param proof ABI-encoded Groth16 proof and public inputs.
+    /// @param expectedRecipient The user who must be encoded in `input[0]`.
+    /// @param expectedAmount The withdrawal amount that must be encoded in `input[1]`.
     function _verifyProof(
         bytes calldata proof,
         address expectedRecipient,
