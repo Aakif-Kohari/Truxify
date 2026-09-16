@@ -58,6 +58,7 @@ import {
   OTP_LOCKOUT_MINUTES,
 } from "../services/order/orderNotificationService.js";
 import logger from "../middleware/logger.js";
+import { refreshToken } from "../controllers/authController.js";
 
 const router = express.Router();
 
@@ -73,6 +74,11 @@ const authLimiter = rateLimit({
 });
 
 router.use(authLimiter);
+
+/**
+ * Exchange a valid rotating refresh token for a backend JWT and a new refresh token.
+ */
+router.post("/refresh", refreshToken);
 
 export function withTimeout(operation, timeoutMs, message) {
   let timer;
