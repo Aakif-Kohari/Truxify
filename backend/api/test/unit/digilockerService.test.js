@@ -188,8 +188,12 @@ describe('digilockerService — mock mode', () => {
               maybeSingle: vi.fn().mockResolvedValue({ data: { polygon_wallet_address: '0x0' }, error: null }),
             })),
           })),
+          update: vi.fn(() => ({
+            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+          })),
         };
       }
+
       if (table === 'driver_documents') {
         return {
           select: vi.fn(() => ({
@@ -346,8 +350,12 @@ describe('digilockerService — live OAuth & error handling', () => {
               }),
             })),
           })),
+          update: vi.fn(() => ({
+            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+          })),
         };
       }
+
       if (table === 'driver_documents') {
         return {
           select: vi.fn(() => ({
@@ -375,5 +383,6 @@ describe('digilockerService — live OAuth & error handling', () => {
     expect(result.success).toBe(true);
     expect(result.syncedDocumentsCount).toBe(2);
     expect(result.isMock).toBe(false);
+    expect(result.is_digilocker_verified).toBe(true);
   });
 });
