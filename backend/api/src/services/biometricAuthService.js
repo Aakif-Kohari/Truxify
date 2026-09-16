@@ -80,7 +80,11 @@ function verifyBiometricToken(token, session, method) {
             return { valid: false, reason: 'Token timestamp too old' };
         }
 
-        const secret = process.env.BIOMETRIC_APP_SECRET || 'truxify-biometric-secret';
+        const secret = process.env.BIOMETRIC_APP_SECRET?.trim();
+        if (!secret) {
+            return { valid: false, reason: 'Biometric token verification is not configured' };
+        }
+
         const expected = crypto
             .createHmac('sha256', secret)
             .update(`${proof.userId}${proof.nonce}${proof.method}${proof.timestamp}`)

@@ -530,3 +530,50 @@ export function createStore(prefix) {
 }
 
 export const __testing = { DeferredRedisStore, isRedisReady };
+
+const { checkRateLimit } = require('../utils/redisSlidingWindow');
+
+const WINDOW_MS = 60 * 1000; 
+const MAX_REQUESTS = 30; 
+
+const memoryFallback = new Map();
+
+const slidingWindowRateLimiter = (options = {}) => {
+  const windowMs = options.windowMs || WINDOW_MS;
+  const maxRequests = options.maxRequests || MAX_REQUESTS;
+  const keyPrefix = options.keyPrefix || 'rl';
+
+  return async (req, res, next) => {
+    const identifier = req.user?.uid || req.ip || req.socket.remoteAddress;
+    const endpoint = req.path;
+    const key = `${keyPrefix}:${identifier}:${endpoint}`;
+
+    try {
+      const isAllowed = await checkRateLimit(key, windowMs, maxRequests);
+
+      if (!isAllowed) {
+        res.set('Retry-After', Math.ceil(windowMs / 1000));
+        return res.status(429).json({
+          error: 'Too Many Requests',
+          message: 'You have exceeded the rate limit for this endpoint. Please try again later.',
+        });
+      }
+      next();
+    } catch (err) {
+      console.error('Rate limiter middleware error:', err.message);
+      
+      const now = Date.now();
+      if (!memoryFallback.has(key)) memoryFallback.set(key, []);
+      const timestamps = memoryFallback.get(key).filter(t => now - t < windowMs);
+      
+      if (timestamps.length >= maxRequests) {
+         return res.status(429).json({ error: 'Too Many Requests (Memory Fallback)' });
+      }
+      timestamps.push(now);
+      memoryFallback.set(key, timestamps);
+      next();
+    }
+  };
+};
+
+module.exports = slidingWindowRateLimiter;
