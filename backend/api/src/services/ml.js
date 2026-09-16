@@ -284,6 +284,65 @@ export async function predictEta({
 }
 
 /**
+ * Calculates the proportional cancellation penalty for a trip already in
+ * progress. The ML service owns the distance ratio and returns the amount in
+ * the same currency unit supplied by the caller.
+ *
+ * @param {object} params
+ * @param {number} params.distanceCoveredKm - Distance already travelled
+ * @param {number} params.totalDistanceKm - Original route distance
+ * @param {number} params.totalAmount - Original booking amount
+ * @returns {Promise<{penalty_amount: number, covered_ratio: number}>}
+ */
+export async function predictCancellationPenalty({
+  distanceCoveredKm,
+  totalDistanceKm,
+  totalAmount,
+}) {
+  guardMlApiKey();
+
+  if (!Number.isFinite(distanceCoveredKm) || distanceCoveredKm < 0) {
+    throw new Error('[ML] distanceCoveredKm must be a finite non-negative number');
+  }
+  if (!Number.isFinite(totalDistanceKm) || totalDistanceKm <= 0) {
+    throw new Error('[ML] totalDistanceKm must be a finite positive number');
+  }
+  if (!Number.isFinite(totalAmount) || totalAmount < 0) {
+    throw new Error('[ML] totalAmount must be a finite non-negative number');
+  }
+
+  const url = `${getBaseUrl()}/cancellation-penalty`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      distance_covered_km: distanceCoveredKm,
+      total_distance_km: totalDistanceKm,
+      total_amount: totalAmount,
+    }),
+    signal: AbortSignal.timeout(ML_HTTP_TIMEOUT_MS),
+  });
+
+  const result = await handleResponse(response, url, 'POST');
+  if (
+    result == null ||
+    !Number.isFinite(result.penalty_amount) ||
+    result.penalty_amount < 0 ||
+    result.penalty_amount > totalAmount ||
+    !Number.isFinite(result.covered_ratio) ||
+    result.covered_ratio < 0 ||
+    result.covered_ratio > 1
+  ) {
+    throw new Error('[ML] Invalid cancellation penalty response');
+  }
+
+  return {
+    penalty_amount: result.penalty_amount,
+    covered_ratio: result.covered_ratio,
+  };
+}
+
+/**
  * Predicts driver profit for a given route using ML model.
  *
  * @param {object} params
