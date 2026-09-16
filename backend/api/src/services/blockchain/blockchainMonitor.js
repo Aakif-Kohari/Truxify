@@ -168,7 +168,7 @@ class BlockchainMonitor {
       severity: 'MEDIUM',
       driver,
       amount: amount.toString(),
-      timestamp: parseInt(timestamp),
+      timestamp: parseInt(timestamp, 10),
       txHash: log.transactionHash,
       blockNumber: log.blockNumber,
     };
