@@ -3,6 +3,8 @@ import logger from '../middleware/logger.js';
 
 const CACHE_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 const NOMINATIM_TIMEOUT_MS = 5000;
+const DEFAULT_RETRY_AFTER_MS = 60000;
+const MAX_RETRY_AFTER_MS = 60000;
 
 /**
  * Returns the Nominatim HTTP timeout in milliseconds.
@@ -13,6 +15,44 @@ const NOMINATIM_TIMEOUT_MS = 5000;
 export function getTimeoutMs() {
   const configured = Number(process.env.NOMINATIM_TIMEOUT_MS);
   return Number.isFinite(configured) && configured > 0 ? configured : NOMINATIM_TIMEOUT_MS;
+}
+
+/**
+ * Parses a Retry-After header value into a millisecond delay.
+ *
+ * Supports both forms defined by RFC 9110:
+ *   - delay-seconds: e.g. "120"
+ *   - HTTP-date:     e.g. "Wed, 21 Oct 2025 07:28:00 GMT"
+ *
+ * Falls back to DEFAULT_RETRY_AFTER_MS when the value is missing,
+ * invalid, non-positive, or already in the past.
+ *
+ * @param {string|null|undefined} retryAfter
+ * @param {number} [now=Date.now()] - current time in ms (injectable for tests)
+ * @returns {number} Delay in milliseconds (always finite and > 0)
+ */
+export function parseRetryAfterMs(retryAfter, now = Date.now()) {
+  if (!retryAfter || typeof retryAfter !== 'string') {
+    return DEFAULT_RETRY_AFTER_MS;
+  }
+
+  const value = retryAfter.trim();
+
+  // Form 1: delay-seconds (integer number of seconds).
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    const ms = seconds * 1000;
+    return Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_RETRY_AFTER_MS;
+  }
+
+  // Form 2: HTTP-date.
+  const retryAt = Date.parse(value);
+  if (!Number.isNaN(retryAt)) {
+    const ms = retryAt - now;
+    return Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_RETRY_AFTER_MS;
+  }
+
+  return DEFAULT_RETRY_AFTER_MS;
 }
 
 /**
@@ -47,28 +87,28 @@ export async function reverseGeocode(lat, lon) {
     // 2. Fetch from OpenStreetMap Nominatim
     // Note: Nominatim requires a valid User-Agent to avoid being blocked
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${roundedLat}&lon=${roundedLon}&zoom=14`;
+    const requestHeaders = {
+      'User-Agent': 'Truxify-Node-Backend/1.0',
+      'Accept-Language': 'en-US,en;q=0.9',
+    };
+
     let response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Truxify-Node-Backend/1.0',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
+      headers: requestHeaders,
       signal: AbortSignal.timeout(getTimeoutMs()),
     });
 
     // Handle rate-limiting with Retry-After support
     if (response.status === 429) {
       const retryAfter = response.headers.get('Retry-After');
-      const retryAfterSecs = Number.parseInt(retryAfter, 10);
-      const waitMs = retryAfter && Number.isFinite(retryAfterSecs)
-        ? Math.min(retryAfterSecs * 1000, 60000)
-        : 60000;
-      logger.warn({ waitMs, lat: roundedLat, lon: roundedLon }, '[ReverseGeocode] Rate-limited, retrying after Retry-After delay');
+      const waitMs = Math.min(parseRetryAfterMs(retryAfter), MAX_RETRY_AFTER_MS);
+      logger.warn(
+        { waitMs, lat: roundedLat, lon: roundedLon },
+        '[ReverseGeocode] Rate-limited, retrying after Retry-After delay'
+      );
       await new Promise((resolve) => setTimeout(resolve, waitMs));
       response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Truxify-Node-Backend/1.0',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
+        headers: requestHeaders,
+        signal: AbortSignal.timeout(getTimeoutMs()),
       });
     }
 
@@ -83,7 +123,7 @@ export async function reverseGeocode(lat, lon) {
     if (data && data.address) {
       // Build a clean, readable location string (e.g., "NH-48, Jaipur")
       const { road, suburb, city, town, village, state } = data.address;
-      
+
       const localArea = road || suburb || village;
       const mainArea = city || town || state;
 
@@ -120,4 +160,3 @@ export function clampGeohashPrecision(v) {
   if (n > MAX) return MAX;
   return Math.floor(n);
 }
-
