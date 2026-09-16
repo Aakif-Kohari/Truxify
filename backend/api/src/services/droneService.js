@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import logger from '../middleware/logger.js';
 
 /**
@@ -19,7 +20,7 @@ class DroneService {
    */
   async launchDroneDelivery({ tripId, parcelId, safeZoneGps, destinationGps }) {
     const droneId = `DRN-AeroX-${Math.floor(10 + Math.random() * 90)}`;
-    const missionId = `MSN-${Date.now()}`;
+    const missionId = `MSN-${crypto.randomUUID()}`;
 
     const missionData = {
       missionId,
