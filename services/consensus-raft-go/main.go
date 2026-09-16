@@ -164,9 +164,9 @@ type RaftNode struct {
 	// never accepts new entries without evidence of a reachable quorum. A peer
 	// is also dropped from liveAck whenever a heartbeat fails or is rejected, so
 	// liveness reflects recent contact instead of a once-set flag.
-	liveAck            map[string]bool
-	persister          *persister
-	httpClient         *http.Client
+	liveAck    map[string]bool
+	persister  *persister
+	httpClient *http.Client
 	// rng is this node's own source of randomness for election timeouts. It is
 	// only accessed while holding mu, so a per-node Rand is safe for concurrent
 	// use across election goroutines of different nodes.
@@ -282,7 +282,6 @@ func (p *persister) SaveLog(log []LogEntry) error {
 	return p.write()
 }
 
-
 func NewRaftNode(id string, peers []string, peerURLs []string) *RaftNode {
 	heartbeatMs := envInt("RAFT_HEARTBEAT_MS", 100)
 	electionMinMs := envInt("RAFT_ELECTION_TIMEOUT_MIN_MS", 500)
@@ -295,20 +294,20 @@ func NewRaftNode(id string, peers []string, peerURLs []string) *RaftNode {
 	term, votedFor, log := p.load()
 
 	return &RaftNode{
-		NodeID:             id,
-		CurrentTerm:        term,
-		VotedFor:           votedFor,
-		Role:               Follower,
-		Log:                log,
-		persister:          p,
-		Peers:              peers,
-		PeerURLs:           peerURLs,
-		LeaderID:           "",
-		lastLeaderSeen:     time.Now(),
-		heartbeatInterval:  time.Duration(heartbeatMs) * time.Millisecond,
-		electionTimeoutMin: time.Duration(electionMinMs) * time.Millisecond,
-		electionTimeoutMax: time.Duration(electionMaxMs) * time.Millisecond,
-		electionTimeout:    time.Duration(electionMinMs) * time.Millisecond,
+		NodeID:              id,
+		CurrentTerm:         term,
+		VotedFor:            votedFor,
+		Role:                Follower,
+		Log:                 log,
+		persister:           p,
+		Peers:               peers,
+		PeerURLs:            peerURLs,
+		LeaderID:            "",
+		lastLeaderSeen:      time.Now(),
+		heartbeatInterval:   time.Duration(heartbeatMs) * time.Millisecond,
+		electionTimeoutMin:  time.Duration(electionMinMs) * time.Millisecond,
+		electionTimeoutMax:  time.Duration(electionMaxMs) * time.Millisecond,
+		electionTimeout:     time.Duration(electionMinMs) * time.Millisecond,
 		nextIndex:           make(map[string]uint64),
 		matchIndex:          make(map[string]uint64),
 		liveAck:             make(map[string]bool),
@@ -402,11 +401,11 @@ func (rn *RaftNode) startElection() {
 		CandidateID:  rn.NodeID,
 		LastLogIndex: rn.lastLogIndex(),
 		LastLogTerm:  rn.lastLogTerm(),
-		}
-		rn.persistMeta()
-		rn.mu.Unlock()
+	}
+	rn.persistMeta()
+	rn.mu.Unlock()
 
-		// Perform outbound HTTP RPC requests without holding rn.mu to avoid deadlocks
+	// Perform outbound HTTP RPC requests without holding rn.mu to avoid deadlocks
 	responses := rn.requestVotes(req)
 
 	rn.mu.Lock()
@@ -870,6 +869,22 @@ func (rn *RaftNode) isLogUpToDate(lastLogIndex, lastLogTerm uint64) bool {
 	return lastLogIndex >= myLastIdx
 }
 
+// isClusterMember reports whether id identifies this node or a configured Raft peer.
+func (rn *RaftNode) isClusterMember(id string) bool {
+	if id == "" {
+		return false
+	}
+	if id == rn.NodeID {
+		return true
+	}
+	for _, peerID := range rn.Peers {
+		if peerID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // HandleAppend implements the Raft AppendEntries RPC.
 func (rn *RaftNode) HandleAppend(w http.ResponseWriter, r *http.Request) {
 	if !requireAuth(w, r) {
@@ -885,6 +900,12 @@ func (rn *RaftNode) HandleAppend(w http.ResponseWriter, r *http.Request) {
 	defer rn.mu.Unlock()
 
 	resp := AppendEntriesResponse{Term: rn.CurrentTerm, Success: false}
+
+	if !rn.isClusterMember(req.LeaderID) {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 
 	if req.Term > rn.CurrentTerm {
 		rn.stepDownLocked(req.Term)
