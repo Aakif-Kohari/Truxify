@@ -56,12 +56,15 @@ class CarbonTokenService {
   /**
    * Transfers/purchases minted carbon credits to offset Scope 3 corporate emissions.
    */
-  async purchaseCarbonCredits({ tokenId, buyerAddress, shipperId }) {
+  async purchaseCarbonCredits({ tokenId, buyerAddress, shipperId, ownerId }) {
     if (!this.tokens.has(tokenId)) {
       throw new Error('Carbon credit token not found');
     }
 
     const token = this.tokens.get(tokenId);
+    if (ownerId && token.ownerId && token.ownerId !== ownerId) {
+      throw new Error('You do not have permission to retire this carbon credit');
+    }
     if (token.status === 'RETIRED_FOR_OFFSET') {
       throw new Error('Carbon credit token has already been redeemed/retired');
     }
