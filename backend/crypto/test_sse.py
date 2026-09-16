@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 os.environ.setdefault('TRUXIFY_SSE_MASTER_KEY', 'test-sse-master-key-0123456789012345')
 
@@ -16,6 +17,13 @@ class TestSSE(unittest.TestCase):
     def test_missing_secret_rejected(self):
         env = os.environ.copy()
         env.pop('TRUXIFY_SSE_MASTER_KEY', None)
+        repo_root = Path(__file__).resolve().parents[2]
+        existing_pythonpath = env.get('PYTHONPATH')
+        env['PYTHONPATH'] = (
+            str(repo_root)
+            if not existing_pythonpath
+            else os.pathsep.join([str(repo_root), existing_pythonpath])
+        )
         result = subprocess.run(
             [sys.executable, '-c', 'import backend.crypto.sse_engine'],
             env=env,
