@@ -292,7 +292,9 @@ class RouteOptimizer:
 
             return self._calculate_score(embeddings, u, v, objectives, graph_data, node_map)
 
-        max_time = constraints.get('max_time') or constraints.get('hos_limit')
+        max_time = constraints.get('max_time')
+        if max_time is None:
+            max_time = constraints.get('hos_limit')
         path = None
 
         if max_time is not None:
