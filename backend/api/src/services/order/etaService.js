@@ -132,6 +132,7 @@ export async function calculateRouteEta({ originLat, originLng, destLat, destLng
     const adjustedSeconds = routeEstimate.durationSeconds * trafficMultiplier;
     const safeDurationSeconds = Math.max(0, adjustedSeconds);
     const arrivalDate = new Date(Date.now() + safeDurationSeconds * 1000);
+    const arrivalDate = new Date(Date.now() + adjustedSeconds * 1000);
     const etaText = formatEtaDisplay(arrivalDate);
 
     if (!etaText) return null;
@@ -140,6 +141,7 @@ export async function calculateRouteEta({ originLat, originLng, destLat, destLng
       etaText,
       arrivalEpochMs: arrivalDate.getTime(),
       durationSeconds: safeDurationSeconds,
+      durationSeconds: adjustedSeconds,
     };
   } catch (err) {
     logger.warn({ err: err?.message }, '[EtaService] Route ETA calculation failed');

@@ -451,7 +451,12 @@ export class OrderLifecycleService {
     );
   }
 
-  async updateMilestone(orderId, milestone, driverId) {
+ async updateMilestone(orderId, milestone, driverId) {
+    if (!orderId) {
+        throw new DomainError(400, {
+            error: 'orderId is required.',
+        });
+    }
     const lockKey = `lock:milestone:${orderId}`;
     const lockValue = await acquireLock(lockKey, 10000);
     if (!lockValue) {
