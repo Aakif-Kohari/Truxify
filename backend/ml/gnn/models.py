@@ -501,8 +501,7 @@ class RouteOptimizer:
         if start == end:
             return [self._build_route_result([])]
 
-        # Each label stores a node, cumulative objective values, elapsed time, and
-        # the simple path used to reach the node. Dominated labels are discarded.
+        # Each label stores cumulative objective values, elapsed time, and the simple path.
         labels = {start: [((0.0,) * len(objectives), 0.0, (start,))]}
         queue = [(tuple(0.0 for _ in objectives), 0.0, start, (start,))]
 
