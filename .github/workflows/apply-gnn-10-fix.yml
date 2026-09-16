@@ -1,0 +1,51 @@
+name: Apply GNN zero max-time fix
+
+on:
+  push:
+    branches:
+      - fix/gnn-10-zero-max-time
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply focused fix and regression tests
+        shell: python
+        run: |
+          from pathlib import Path
+
+          model_path = Path("backend/ml/gnn/models.py")
+          model_text = model_path.read_text(encoding="utf-8")
+          old = "        max_time = constraints.get('max_time') or constraints.get('hos_limit')"
+          new = "        max_time = constraints.get('max_time')\n        if max_time is None:\n            max_time = constraints.get('hos_limit')"
+
+          if old not in model_text:
+              raise SystemExit("Expected max_time expression was not found; refusing to modify the file.")
+
+          model_path.write_text(model_text.replace(old, new, 1), encoding="utf-8")
+
+          test_path = Path("backend/ml/tests/test_gnn_zero_max_time.py")
+          test_path.write_text(
+              '''import pytest\nimport torch\n\ntorch_geometric = pytest.importorskip("torch_geometric")\nfrom gnn.models import GraphNetworkBuilder, RouteOptimizer\n\n\n@pytest.fixture\ndef sample_network():\n    builder = GraphNetworkBuilder()\n    nodes = [\n        {'id': 'A', 'lat': 12.97, 'lng': 77.59, 'traffic': 20, 'road_type': 'highway', 'speed_limit': 80},\n        {'id': 'B', 'lat': 12.98, 'lng': 77.60, 'traffic': 30, 'road_type': 'arterial', 'speed_limit': 60},\n        {'id': 'C', 'lat': 12.99, 'lng': 77.61, 'traffic': 10, 'road_type': 'highway', 'speed_limit': 80},\n    ]\n    edges = [\n        {'source': 'A', 'target': 'B', 'distance': 10.0, 'time': 15.0, 'cost': 100.0, 'fuel': 5.0, 'congestion': 0.2},\n        {'source': 'B', 'target': 'C', 'distance': 15.0, 'time': 20.0, 'cost': 150.0, 'fuel': 7.0, 'congestion': 0.1},\n        {'source': 'A', 'target': 'C', 'distance': 22.0, 'time': 25.0, 'cost': 300.0, 'fuel': 10.0, 'congestion': 0.5},\n    ]\n    builder.build_road_network(nodes, edges)\n    return builder.get_pytorch_data()\n\n\ndef test_zero_max_time_is_enforced(sample_network):\n    optimizer = RouteOptimizer()\n\n    result = optimizer.optimize_route(\n        'A',\n        'C',\n        sample_network,\n        constraints={'max_time': 0},\n    )\n\n    assert result is None\n\n\ndef test_zero_hos_limit_is_enforced(sample_network):\n    optimizer = RouteOptimizer()\n\n    result = optimizer.optimize_route(\n        'A',\n        'C',\n        sample_network,\n        constraints={'hos_limit': 0},\n    )\n\n    assert result is None\n''',
+              encoding="utf-8",
+          )
+
+          workflow_path = Path(".github/workflows/apply-gnn-10-fix.yml")
+          workflow_path.unlink()
+
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/ml/gnn/models.py backend/ml/tests/test_gnn_zero_max_time.py .github/workflows/apply-gnn-10-fix.yml
+          git diff --cached --check
+          git commit -m "fix(gnn): enforce zero-valued max time constraint"
+          git push origin HEAD:fix/gnn-10-zero-max-time
