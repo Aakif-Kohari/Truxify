@@ -120,7 +120,7 @@ contract ZKCP is Ownable {
     }
 
     /**
-     * @notice Releases escrow funds atomically to the seller upon verifying the decryption key and dataset binding
+     * @notice Releases escrow funds atomically to the seller upon verifying the decryption key and dataset binding (#14779)
      * @param _agreementId Unique agreement identifier
      * @param _decryptionKey Secret cryptographic decryption key for the dataset
      * @param _actualDataHash Hash of the delivered dataset payload ensuring true data delivery contingency

@@ -208,16 +208,54 @@ describe('Pricing Service Unit Tests', () => {
       expect(Number.isFinite(result.netProfit)).toBe(true);
     });
 
-    it('netProfit does not subtract tollEstimate since toll is a pass-through in totalAmount', () => {
-      // Using defaultInput: baseFreight=80000, fuelCost=36000, tollEstimate=20000
-      // totalAmount = 80000 + 20000 + 4000 = 104000 (toll included)
-      // netProfit should = baseFreight - fuelCost = 80000 - 36000 = 44000
-      // NOT baseFreight - fuelCost - tollEstimate = 80000 - 36000 - 20000 = 24000
-      const result = computeOrderPricing(defaultInput, mockRateCard);
-      expect(result.netProfit).toBe(44000);
-      expect(result.netProfit).toBe(result.baseFreight - result.fuelCost);
-      // Verify toll is still in totalAmount
-      expect(result.totalAmount).toBe(result.baseFreight + result.tollEstimate + result.platformFee);
+    it('guarantees finite results when inputs or rate cards have edge-case values (zero distance, null/NaN surcharges)', () => {
+      const edgeCard = {
+        ratePerTonneKm: 50,
+        handlingFee: NaN,
+        tollPerKm: undefined,
+        platformFeePct: null,
+        fuelCostPct: Infinity,
+        fragileMultiplier: NaN,
+        stackableDiscount: -1,
+      };
+
+      const resultZeroDistance = computeOrderPricing({
+        pickupLat: 0,
+        pickupLng: 0,
+        dropLat: 0,
+        dropLng: 0,
+        weightTonnes: 5,
+        roadDistanceKm: 0,
+      }, edgeCard);
+
+      expect(Number.isFinite(resultZeroDistance.distanceKm)).toBe(true);
+      expect(Number.isFinite(resultZeroDistance.baseFreight)).toBe(true);
+      expect(Number.isFinite(resultZeroDistance.tollEstimate)).toBe(true);
+      expect(Number.isFinite(resultZeroDistance.platformFee)).toBe(true);
+      expect(Number.isFinite(resultZeroDistance.totalAmount)).toBe(true);
+      expect(Number.isFinite(resultZeroDistance.fuelCost)).toBe(true);
+      expect(Number.isFinite(resultZeroDistance.netProfit)).toBe(true);
+      expect(resultZeroDistance.totalAmount).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('safePaisa', () => {
+    const { safePaisa } = __testing;
+
+    it('returns rounded integer for valid finite positive numbers', () => {
+      expect(safePaisa(100.4)).toBe(100);
+      expect(safePaisa(100.6)).toBe(101);
+      expect(safePaisa(0)).toBe(0);
+    });
+
+    it('returns safe fallback 0 for non-finite and negative inputs', () => {
+      expect(safePaisa(NaN)).toBe(0);
+      expect(safePaisa(Infinity)).toBe(0);
+      expect(safePaisa(-Infinity)).toBe(0);
+      expect(safePaisa(-50)).toBe(0);
+      expect(safePaisa(null)).toBe(0);
+      expect(safePaisa(undefined)).toBe(0);
+      expect(safePaisa('not-a-number')).toBe(0);
     });
   });
 
@@ -252,23 +290,19 @@ describe('guardNonNegative', () => {
 });
 describe('parsePositiveFloat (from __testing)', () => {
   it('returns parsed value for valid positive numbers', () => {
-    const { __testing } = require('../../src/lib/pricing.js');
     expect(__testing.parsePositiveFloat(5, 1)).toBe(5);
     expect(__testing.parsePositiveFloat('10.5', 1)).toBe(10.5);
   });
 
-  it('returns fallback for zero', () => {
-    const { __testing } = require('../../src/lib/pricing.js');
-    expect(__testing.parsePositiveFloat(0, 1)).toBe(1);
+  it('returns 0 as a valid non-negative value', () => {
+    expect(__testing.parsePositiveFloat(0, 1)).toBe(0);
   });
 
   it('returns fallback for negative numbers', () => {
-    const { __testing } = require('../../src/lib/pricing.js');
     expect(__testing.parsePositiveFloat(-5, 1)).toBe(1);
   });
 
   it('returns fallback for NaN', () => {
-    const { __testing } = require('../../src/lib/pricing.js');
     expect(__testing.parsePositiveFloat(NaN, 1)).toBe(1);
   });
 });

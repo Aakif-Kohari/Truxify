@@ -160,6 +160,18 @@ export class OrderRepository {
   return result;
 }
 
+  async updateDeliveryEtaState(id, updates, previousEta, previousState) {
+    return this._retryableQuery(() => {
+      let query = this.supabase
+        .from('orders')
+        .update(updates)
+        .eq('id', id)
+        .eq('delivery_delay_state', previousState);
+      query = previousEta == null ? query.is('eta', null) : query.eq('eta', previousEta);
+      return query.select('id, eta, delivery_delay_state').maybeSingle();
+    }, 'updateDeliveryEtaState');
+  }
+
   async updateOrderWithFilter(id, updates, filters, selectColumns) {
     return this._retryableQuery(() => {
       let query = this.supabase.from('orders').update(updates).eq('id', id);
@@ -435,14 +447,6 @@ export class OrderRepository {
       .maybeSingle(), 'findCustomerWallet');
   }
 
-  async findProfileWallet(userId) {
-    return this._retryableQuery(() => this.supabase
-      .from('profiles')
-      .select('polygon_wallet_address')
-      .eq('id', userId)
-      .maybeSingle(), 'findProfileWallet');
-  }
-
   // ===================================================================
   // DRIVER DETAILS (read-only lookups for order context)
   // ===================================================================
@@ -491,6 +495,7 @@ export class OrderRepository {
   // ===================================================================
 
   async findTruckById(id, columns = 'id') {
+    if (!id) return { data: null, error: null };
     return this._retryableQuery(() => this.supabase
       .from('trucks')
       .select(columns)
@@ -499,6 +504,7 @@ export class OrderRepository {
   }
 
   async findTruckWithDetails(id) {
+    if (!id) return { data: null, error: null };
     return this._retryableQuery(() => this.supabase
       .from('trucks')
       .select('id, name, number_plate')
@@ -507,6 +513,7 @@ export class OrderRepository {
   }
 
   async findTrucksByIds(ids) {
+    if (!ids || ids.length === 0) return { data: [], error: null };
     return this._retryableQuery(() => this.supabase
       .from('trucks')
       .select('id, name, number_plate')

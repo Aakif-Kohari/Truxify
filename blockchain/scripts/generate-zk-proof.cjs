@@ -13,7 +13,7 @@ class ZKProofGenerator {
         this.vkPath = path.join(__dirname, '../circuits/verification_key.json');
     }
 
-    async generateProof(driverData) {
+    async generateProof(driverData, userAddress) {
         try {
             console.log('🔐 Generating ZK-SNARK proof for driver KYC...');
             
@@ -21,8 +21,8 @@ class ZKProofGenerator {
             const documentHash = this.hashDocument(driverData);
             console.log(`📄 Document hash: ${documentHash}`);
             
-            // Step 2: Generate witness
-            const witness = this.generateWitness(driverData, documentHash);
+            // Step 2: Generate witness with user binding
+            const witness = this.generateWitness(driverData, documentHash, userAddress);
             console.log('✅ Witness generated');
             
             // Step 3: Generate proof
@@ -66,17 +66,18 @@ class ZKProofGenerator {
         return crypto.createHash('sha256').update(documentString).digest('hex');
     }
 
-    generateWitness(driverData, documentHash) {
+    generateWitness(driverData, documentHash, userAddress) {
         // Witness for ZK-SNARK
-        // Inputs: name, licenseNumber, rcNumber, insuranceNumber, documentHash
-        // Output: boolean (verified or not)
+        // Inputs: userAddress (public), documentHash (public), name, licenseNumber, rcNumber, insuranceNumber
+        // Output: isValid, userCommitment (computed cryptographically)
+        const userAddressField = userAddress ? BigInt(userAddress).toString() : "0";
         return {
+            userAddress: userAddressField,
+            documentHash: documentHash,
             name: this.stringToBytes(driverData.name),
             licenseNumber: this.stringToBytes(driverData.licenseNumber),
             rcNumber: this.stringToBytes(driverData.rcNumber),
-            insuranceNumber: this.stringToBytes(driverData.insuranceNumber),
-            documentHash: documentHash,
-            verified: 1
+            insuranceNumber: this.stringToBytes(driverData.insuranceNumber)
         };
     }
 
@@ -130,8 +131,8 @@ class ZKProofGenerator {
     }
 
     async generateAndSubmitProof(driverData, userAddress) {
-        // Generate proof
-        const proofData = await this.generateProof(driverData);
+        // Generate proof with user binding
+        const proofData = await this.generateProof(driverData, userAddress);
         
         if (!proofData.isValid) {
             throw new Error('Proof validation failed');
