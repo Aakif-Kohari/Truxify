@@ -325,6 +325,7 @@ export class TrackingTokenService {
   }
 }
 
+/*
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const locationService = require('./locationService');
@@ -392,3 +393,4 @@ module.exports = {
   validateTrackingToken,
   updateLocationWithToken,
 };
+*/

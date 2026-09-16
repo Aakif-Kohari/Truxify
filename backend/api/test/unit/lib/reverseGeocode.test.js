@@ -1,4 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+/**
+ * Unit tests for reverseGeocode.js
+ *
+ * Tests input validation, coordinate boundary checks, timeout configuration,
+ * geohash precision clamping, and address parsing logic.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   reverseGeocode,
   getReverseGeocode,
@@ -15,6 +21,7 @@ vi.mock('../../../src/middleware/logger.js', () => ({
     debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+    info: vi.fn(),
   },
 }));
 
@@ -27,6 +34,72 @@ vi.mock('../../../src/config/db.js', () => ({
 
 // Mock global fetch
 global.fetch = vi.fn();
+
+describe('getTimeoutMs', async () => {
+  const original = process.env.NOMINATIM_TIMEOUT_MS;
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env.NOMINATIM_TIMEOUT_MS;
+    } else {
+      process.env.NOMINATIM_TIMEOUT_MS = original;
+    }
+  });
+
+  it('uses default 5000ms when env is not set', async () => {
+    delete process.env.NOMINATIM_TIMEOUT_MS;
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('uses custom timeout from env variable when valid positive number', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '3000';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(3000);
+  });
+
+  it('falls back to default 5000ms when env is an empty string', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is whitespace', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '    ';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is zero', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '0';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is negative', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '-1000';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is NaN or non-numeric string', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = 'NaN';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+
+    process.env.NOMINATIM_TIMEOUT_MS = 'invalid';
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is Infinity or -Infinity', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = 'Infinity';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+
+    process.env.NOMINATIM_TIMEOUT_MS = '-Infinity';
+    expect(getTimeoutMs()).toBe(5000);
+  });
+});
 
 describe('Reverse Geocode Utility (Issue #14036)', () => {
   beforeEach(() => {
@@ -53,7 +126,7 @@ describe('Reverse Geocode Utility (Issue #14036)', () => {
         expect.stringContaining('[ReverseGeocode] Aborted early')
       );
     });
-
+    
     it('returns null when coordinates cannot be coerced to valid Numbers (NaN)', async () => {
       expect(await reverseGeocode('abc', 77.209)).toBeNull();
       expect(await reverseGeocode(28.6139, 'xyz')).toBeNull();
