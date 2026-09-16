@@ -241,20 +241,24 @@ class RouteOptimizer:
                 logger.warning(f"No complete route found from {start_node} to {end_node}")
                 return None
 
-            return {
-                'success': True,
-                'route': route,
-                'total_distance': sum(r.get('distance', 0) for r in route),
-                'total_time': sum(r.get('time', 0) for r in route),
-                'total_cost': sum(r.get('cost', 0) for r in route),
-                'total_fuel': sum(r.get('fuel', 0) for r in route),
-                'nodes_visited': 1 if start_node == end_node else len(route) + 1,
-                'timestamp': datetime.now().isoformat()
-            }
+            return self._build_route_result(route)
             
         except Exception as e:
             logger.error(f"Route optimization failed: {e}")
             return None
+
+    def _build_route_result(self, route):
+        """Build the stable single-route response used by existing callers."""
+        return {
+            'success': True,
+            'route': route,
+            'total_distance': sum(r.get('distance', 0) for r in route),
+            'total_time': sum(r.get('time', 0) for r in route),
+            'total_cost': sum(r.get('cost', 0) for r in route),
+            'total_fuel': sum(r.get('fuel', 0) for r in route),
+            'nodes_visited': 1 if not route else len(route) + 1,
+            'timestamp': datetime.now().isoformat()
+        }
     
     def _find_optimal_route(self, start, end, embeddings, graph_data, objectives, constraints=None):
         """Find optimal route using constrained shortest path with GNN heuristics and HOS limits."""
@@ -429,35 +433,154 @@ class RouteOptimizer:
         self.model.load_state_dict(torch.load(path, map_location=self.device))
         self.model.eval()
         logger.info(f"✅ Model loaded from {path}")
+
+    def _edge_is_feasible(self, edge_data, constraints):
+        """Return whether an edge satisfies the active hard route constraints."""
+        if constraints.get('hazmat', False) and not edge_data.get('hazmat_allowed', True):
+            return False
+
+        truck_weight = constraints.get('truck_weight') or constraints.get('weight')
+        max_weight = edge_data.get('max_weight') or edge_data.get('weight_limit')
+        if truck_weight is not None and max_weight is not None and truck_weight > max_weight:
+            return False
+
+        truck_height = constraints.get('truck_height') or constraints.get('height')
+        max_height = edge_data.get('max_height') or edge_data.get('height_limit')
+        if truck_height is not None and max_height is not None and truck_height > max_height:
+            return False
+
+        return True
+
+    def _route_result_for_path(self, path, graph_data):
+        """Convert a node path into the same route result shape as optimize_route."""
+        route = []
+        for i in range(len(path) - 1):
+            u, v = path[i], path[i + 1]
+            edge_data = graph_data.graph[u][v]
+            route.append({
+                'from': u,
+                'to': v,
+                'distance': edge_data.get('distance', 0),
+                'time': edge_data.get('time', 0),
+                'cost': edge_data.get('cost', 0),
+                'fuel': edge_data.get('fuel', 0),
+                'congestion': edge_data.get('congestion', 0)
+            })
+        return self._build_route_result(route)
+
+    def _pareto_dominates(self, left, right, objectives):
+        """Return True when left is no worse in every objective and better in one."""
+        left_values = tuple(left[f'total_{objective}'] for objective in objectives)
+        right_values = tuple(right[f'total_{objective}'] for objective in objectives)
+        return all(a <= b for a, b in zip(left_values, right_values)) and any(
+            a < b for a, b in zip(left_values, right_values)
+        )
+
+    def _pareto_frontier(self, candidates, objectives):
+        """Filter a set of route results down to its nondominated frontier."""
+        frontier = []
+        for candidate in candidates:
+            dominated = False
+            for existing in candidates:
+                if existing is candidate:
+                    continue
+                if self._pareto_dominates(existing, candidate, objectives):
+                    dominated = True
+                    break
+            if not dominated:
+                frontier.append(candidate)
+        return frontier
+
+    def _find_pareto_routes(self, start, end, graph_data, objectives, constraints=None):
+        """Find the exact nondominated set of additive objective routes."""
+        constraints = constraints or {}
+        if not hasattr(graph_data, 'graph'):
+            return []
+        if start not in graph_data.graph or end not in graph_data.graph:
+            return []
+        if start == end:
+            return [self._build_route_result([])]
+
+        # Each label stores a node, cumulative objective values, elapsed time, and
+        # the simple path used to reach the node. Dominated labels are discarded.
+        labels = {start: [((0.0,) * len(objectives), 0.0, (start,))]}
+        queue = [(tuple(0.0 for _ in objectives), 0.0, start, (start,))]
+
+        while queue:
+            current_values, current_time, current_node, current_path = heapq.heappop(queue)
+
+            if current_node != end:
+                for neighbor in graph_data.graph.neighbors(current_node):
+                    if neighbor in current_path:
+                        continue
+
+                    edge_data = graph_data.graph[current_node][neighbor]
+                    if not self._edge_is_feasible(edge_data, constraints):
+                        continue
+
+                    edge_time = float(edge_data.get('time', 0))
+                    new_time = current_time + edge_time
+                    max_time = constraints.get('max_time')
+                    if max_time is None:
+                        max_time = constraints.get('hos_limit')
+                    if max_time is not None and new_time > max_time:
+                        continue
+
+                    new_values = tuple(
+                        current_values[index] + float(edge_data.get(objective, 0))
+                        for index, objective in enumerate(objectives)
+                    )
+                    new_path = current_path + (neighbor,)
+                    new_label = (new_values, new_time, new_path)
+
+                    existing_labels = labels.setdefault(neighbor, [])
+                    candidate_result = self._route_result_for_path(new_path, graph_data)
+
+                    dominated = False
+                    survivors = []
+                    for existing_values, existing_time, existing_path in existing_labels:
+                        existing_result = self._route_result_for_path(existing_path, graph_data)
+                        if self._pareto_dominates(existing_result, candidate_result, objectives):
+                            dominated = True
+                            survivors.append((existing_values, existing_time, existing_path))
+                            continue
+                        if self._pareto_dominates(candidate_result, existing_result, objectives):
+                            continue
+                        survivors.append((existing_values, existing_time, existing_path))
+
+                    if dominated:
+                        labels[neighbor] = survivors
+                        continue
+
+                    survivors.append(new_label)
+                    labels[neighbor] = survivors
+                    heapq.heappush(queue, new_label)
+
+        destination_labels = labels.get(end, [])
+        candidates = [self._route_result_for_path(path, graph_data) for _, _, path in destination_labels]
+        return self._pareto_frontier(candidates, objectives)
     
     def multi_objective_optimization(self, start, end, graph_data, constraints=None):
-        """Multi-objective route optimization"""
-        objectives = [
-            {'name': 'time', 'weight': 0.5},
-            {'name': 'cost', 'weight': 0.3},
-            {'name': 'fuel', 'weight': 0.2}
-        ]
-        
-        # Get Pareto optimal routes
-        routes = []
-        for obj in objectives:
-            route = self.optimize_route(
-                start, end, graph_data, 
-                objectives=[obj['name']],
-                constraints=constraints
-            )
-            if route:
-                routes.append(route)
-        
-        if not routes:
+        """Return a representative route together with the exact Pareto frontier."""
+        objectives = ['time', 'cost', 'fuel']
+        frontier = self._find_pareto_routes(start, end, graph_data, objectives, constraints)
+
+        if not frontier:
             return None
 
-        # Select best route
-        best_route = min(routes, key=lambda x: 
-            sum([obj['weight'] * x.get(f'total_{obj["name"]}', 0) for obj in objectives])
+        weights = {'time': 0.5, 'cost': 0.3, 'fuel': 0.2}
+        best_route = min(
+            frontier,
+            key=lambda candidate: sum(
+                weights[objective] * candidate[f'total_{objective}']
+                for objective in objectives
+            )
         )
-        
-        return best_route
+
+        result = dict(best_route)
+        result['pareto_routes'] = frontier
+        result['pareto_count'] = len(frontier)
+        return result
     
     def real_time_update(self, current_route, new_traffic_data):
         """Update route based on real-time traffic"""
