@@ -1,6 +1,9 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
+/**
+ * Build a deterministic mock Groth16 proof payload with the supplied public inputs.
+ */
 function proofWithInput(input) {
   return {
     a: [1n, 2n],
@@ -13,6 +16,9 @@ function proofWithInput(input) {
   };
 }
 
+/**
+ * Assert that a Hardhat transaction reverts with the expected reason text.
+ */
 async function expectRevert(promise, expectedMessage) {
   try {
     await promise;
@@ -144,5 +150,18 @@ describe("ZKPrivacy nullifier consumption", function () {
     expect(await zkPrivacy.isNullifierUsed(nullifier)).to.equal(true);
     expect(await zkPrivacy.commitmentAmounts(commitment)).to.equal(0n);
     expect(await zkPrivacy.spentCommitments(commitment)).to.equal(true);
+
+    await expectRevert(
+      zkPrivacy
+        .connect(sender)
+        .processPrivateTransaction(
+          nullifier,
+          commitment,
+          recipient.address,
+          amount,
+          proofWithInput(input)
+        ),
+      "Nullifier already used"
+    );
   });
 });
