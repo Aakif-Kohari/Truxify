@@ -25,9 +25,7 @@ class ConflictResolver {
         supersededIds: supersededIds,
       );
     } catch (err, stack) {
-      // Safe fallback wrapper for robust error handling during conflict resolution
-      print('[ConflictResolver Error] Failed in resolveWithDetails: $err
-$stack');
+      print('[ConflictResolver Error] Failed in resolveWithDetails: $err\n$stack');
       return ConflictResolutionResult(resolved: events, supersededIds: []);
     }
   }
@@ -37,7 +35,6 @@ $stack');
       final sorted = List<TripEvent>.of(events)
         ..sort((a, b) => _compareTimestamp(a.occurredAt, b.occurredAt));
 
-      // Fixed: Preserve all GPS updates instead of collapsing to a single point (Issue #14783)
       final gpsEvents = <TripEvent>[];
       final otpByStop = <String, TripEvent>{};
       final stopByTripStop = <String, TripEvent>{};
@@ -49,35 +46,47 @@ $stack');
         try {
           switch (event.type) {
             case 'gpsUpdate':
-              // Lossless retention of every GPS ping captured while offline
               gpsEvents.add(event);
               break;
             case 'otpDelivery':
-              final key = '${event.tripId}:${event.payload['stopId']}';
-              otpByStop.putIfAbsent(key, () => event);
+              {
+                final key = '${event.tripId}:${event.payload['stopId']}';
+                final current = otpByStop[key];
+                if (current == null || _compareTimestamp(event.occurredAt, current.occurredAt) >= 0) {
+                  otpByStop[key] = event;
+                }
+              }
               break;
             case 'stopArrival':
-              final key = '${event.tripId}:${event.payload['stopId']}';
-              stopByTripStop.putIfAbsent(key, () => event);
+              {
+                final key = '${event.tripId}:${event.payload['stopId']}';
+                final current = stopByTripStop[key];
+                if (current == null || _compareTimestamp(event.occurredAt, current.occurredAt) >= 0) {
+                  stopByTripStop[key] = event;
+                }
+              }
               break;
             case 'podMetadata':
-              final key = event.tripId;
-              podByTrip[key] = _mergePodMetadata(podByTrip[key], event);
+              {
+                final key = event.tripId;
+                podByTrip[key] = _mergePodMetadata(podByTrip[key], event);
+              }
               break;
             case 'routeDeviation':
               routeEvents.add(event);
               break;
             case 'tripStart':
             case 'tripEnd':
-              final key = '${event.tripId}:${event.type}';
-              lifecycleByTrip.putIfAbsent(key, () => event);
+              {
+                final key = '${event.tripId}:${event.type}';
+                lifecycleByTrip.putIfAbsent(key, () => event);
+              }
               break;
             default:
               routeEvents.add(event);
               break;
           }
         } catch (eventErr) {
-          // Individual event processing safety net
           routeEvents.add(event);
         }
       }
@@ -152,19 +161,4 @@ $stack');
       return incoming;
     }
   }
-}
-
-class ResolutionStrategy {
-  final String name;
-  final int priority;
-  const ResolutionStrategy(this.name, this.priority);
-
-  static const latestWins = ResolutionStrategy('latestWins', 1);
-  static const earliestWins = ResolutionStrategy('earliestWins', 2);
-  static const serverWins = ResolutionStrategy('serverWins', 3);
-  static const clientWins = ResolutionStrategy('clientWins', 4);
-
-  static ResolutionStrategy fromName(String n) => [latestWins, earliestWins, serverWins, clientWins].firstWhere((s) => s.name == n, orElse: () => latestWins);
-
-  static final List<ResolutionStrategy> values = [latestWins, earliestWins, serverWins, clientWins];
 }
