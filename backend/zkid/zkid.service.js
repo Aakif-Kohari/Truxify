@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import logger from '../api/src/middleware/logger.js';
 import { supabase } from '../api/src/config/db.js';
+import { recoverVerificationSigner, verifyProofOwnership } from './proofVerifier.js';
 
 export class ZKIDService {
     constructor() {
@@ -162,36 +163,18 @@ export class ZKIDService {
             return { verified: false, reason: 'Missing or invalid proofData' };
         }
 
-        const challenge = ethers.keccak256(
-            ethers.AbiCoder.defaultAbiCoder().encode(
-                ['bytes32', 'bytes32'],
-                [identityHash, credentialHash]
-            )
-        );
-
         let prover;
         try {
-            prover = ethers.verifyMessage(ethers.getBytes(challenge), proofData);
+            prover = recoverVerificationSigner(proofData, identityHash, credentialHash).prover;
         } catch (err) {
             logger.error('Proof signature recovery failed:', err);
             return { verified: false, reason: 'Proof signature recovery failed' };
         }
 
         const identity = await this.getIdentity(identityHash);
-        if (!identity) {
-            return { verified: false, reason: 'Identity not found' };
-        }
-
-        if (!identity.isActive) {
-            return { verified: false, reason: 'Identity is revoked' };
-        }
-
-        if (identity.owner.toLowerCase() !== prover.toLowerCase()) {
-            return {
-                verified: false,
-                prover,
-                reason: 'Proof signer does not own the registered identity'
-            };
+        const result = verifyProofOwnership(proofData, identityHash, credentialHash, identity);
+        if (!result.verified) {
+            return result;
         }
 
         return { verified: true, prover };
