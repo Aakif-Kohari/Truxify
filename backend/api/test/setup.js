@@ -38,7 +38,7 @@ console.error = (...args) => {
   originalError(...args);
 };
 
-const RedisMock = require('./mocks/redisMock');
+import RedisMock from './mocks/redisMock.js';
 
 global.mockRedis = new RedisMock();
 
@@ -50,6 +50,29 @@ beforeEach(() => {
 afterAll(() => {
   global.mockRedis.clear();
 });
+
+vi.mock('mongoose', () => ({
+  default: {
+    connection: { readyState: 0 },
+    disconnect: vi.fn().mockResolvedValue(undefined),
+  },
+  connection: { readyState: 0 },
+  disconnect: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('mongodb', () => ({
+  MongoClient: class {
+    connect() { return Promise.resolve(this); }
+    close() { return Promise.resolve(); }
+    db() {
+      return {
+        collection: () => ({
+          createIndex: vi.fn().mockResolvedValue('index_name'),
+        }),
+      };
+    }
+  },
+}));
 
 vi.mock('redis', () => {
   return {
