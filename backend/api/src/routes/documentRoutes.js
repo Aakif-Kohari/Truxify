@@ -90,21 +90,3 @@ router.post('/verify-digilocker', authenticate, userLimiter, async (req, res) =>
 });
 
 export default router;
-
-const express = require('express');
-const router = express.Router();
-const multer = require('multer');
-
-router.get(
-  '/',
-  authMiddleware,
-  documentController.listDocuments
-);
-
-router.delete(
-  '/:documentId',
-  authMiddleware,
-  documentController.removeDocument
-);
-
-module.exports = router;
