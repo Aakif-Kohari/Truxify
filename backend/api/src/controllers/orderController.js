@@ -4,7 +4,7 @@ import { BidAcceptanceService, DomainError } from '../services/order/bidAcceptan
 import { OrderTimelineService } from '../services/order/orderTimelineService.js';
 import { OrderLifecycleService } from '../services/order/orderLifecycleService.js';
 import { OrderValidationService } from '../services/order/orderValidationService.js';
-import { buildDepositTx, recordDepositTx, escrowRefund } from '../services/escrow.js';
+import { buildDepositTx, recordDepositTx, submitEscrowRefund } from '../services/escrow.js';
 import { predictDemand } from '../services/ml.js';
 import { buildStraightLineGeometry, getRouteGeometry } from '../services/osrm.js';
 import logger from '../middleware/logger.js';
@@ -17,7 +17,7 @@ const bidAcceptanceService = new BidAcceptanceService({
   orderRepository,
   buildDepositTxFn: buildDepositTx,
   recordDepositTxFn: recordDepositTx,
-  escrowRefundFn: escrowRefund,
+  escrowRefundFn: submitEscrowRefund,
   logger,
 });
 
@@ -49,47 +49,33 @@ export const getActiveOrders = async (req, res) => {
   }
 };
 
-export const getLoadOffers = async (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-  const from = (page - 1) * limit;
-  const to = page * limit - 1;
+function parsePagination(query) {
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 20));
+  return { from: (page - 1) * limit, to: page * limit - 1 };
+}
+
+async function fetchLoadOffers(req, res, { isEnRoute, label }) {
+  const { from, to } = parsePagination(req.query);
   try {
     const { data: offers, error } = await supabase
       .from('load_offers')
       .select('*')
-      .eq('is_en_route', false)
+      .eq('is_en_route', isEnRoute)
       .order('created_at', { ascending: false })
       .range(from, to);
 
-    if (error) return res.status(500).json({ error: 'Failed to fetch load offers.', details: error.message });
+    if (error) return res.status(500).json({ error: `Failed to fetch ${label}.`, details: error.message });
     res.json(offers);
   } catch (err) {
-    logger.error("[orderController] Failed to fetch load offers:", err.message);
+    logger.error(`[orderController] Failed to fetch ${label}:`, err.message);
     res.status(500).json({ error: 'Internal Server Error' });
   }
-};
+}
 
-export const getEnRouteLoads = async (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-  const from = (page - 1) * limit;
-  const to = page * limit - 1;
-  try {
-    const { data: offers, error } = await supabase
-      .from('load_offers')
-      .select('*')
-      .eq('is_en_route', true)
-      .order('created_at', { ascending: false })
-      .range(from, to);
+export const getLoadOffers = (req, res) => fetchLoadOffers(req, res, { isEnRoute: false, label: 'load offers' });
 
-    if (error) return res.status(500).json({ error: 'Failed to fetch en-route loads.', details: error.message });
-    res.json(offers);
-  } catch (err) {
-    logger.error("[orderController] Failed to fetch en-route loads:", err.message);
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-};
+export const getEnRouteLoads = (req, res) => fetchLoadOffers(req, res, { isEnRoute: true, label: 'en-route loads' });
 
 export const getOrderHistory = async (req, res) => {
   try {

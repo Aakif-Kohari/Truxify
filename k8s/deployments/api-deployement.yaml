@@ -1,4 +1,4 @@
-apiVersion: apps/v1
+﻿apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api-deployment
@@ -18,10 +18,18 @@ spec:
         app: truxify
         component: api
     spec:
+      automountServiceAccountToken: false
       serviceAccountName: api-service-account
       containers:
       - name: api
         image: truxify/api:1.0.0
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5000

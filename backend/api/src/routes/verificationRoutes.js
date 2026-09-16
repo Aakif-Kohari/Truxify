@@ -311,7 +311,7 @@ router.post('/kyc/upload', kycUploadLimiter, authenticate, upload.single('image'
     if (error?.name === 'AbortError') {
       return res.status(504).json({ success: false, error: 'OCR service timed out. Please try again.' });
     }
-    logger.error({ event: 'KYC_UPLOAD_ERROR', requestId: req.requestId || req.id, error: error && error.message }, 'KYC upload error');
+    logger.error({ event: 'KYC_UPLOAD_ERROR', requestId: req.requestId || req.id, userId: req.user?.id, error: error?.message || error, stack: error?.stack }, 'KYC upload error');
     res.status(500).json({
       success: false,
       error: error.message

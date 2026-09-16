@@ -1,4 +1,4 @@
-import '../models/trip_event.dart';
+﻿import '../models/trip_event.dart';
 
 class ConflictResolutionResult {
   final List<TripEvent> resolved;
@@ -44,14 +44,24 @@ class ConflictResolver {
             gpsByTrip[event.tripId] = event;
           }
           break;
-        case 'otpDelivery':
+      case 'otpDelivery':
+        {
           final key = '${event.tripId}:${event.payload['stopId']}';
-          otpByStop.putIfAbsent(key, () => event);
-          break;
-        case 'stopArrival':
+          final current = otpByStop[key];
+          if (current == null || _compareTimestamp(event.occurredAt, current.occurredAt) >= 0) {
+            otpByStop[key] = event;
+          }
+        }
+        break;
+      case 'stopArrival':
+        {
           final key = '${event.tripId}:${event.payload['stopId']}';
-          stopByTripStop.putIfAbsent(key, () => event);
-          break;
+          final current = stopByTripStop[key];
+          if (current == null || _compareTimestamp(event.occurredAt, current.occurredAt) >= 0) {
+            stopByTripStop[key] = event;
+          }
+        }
+        break;
         case 'podMetadata':
           final key = event.tripId;
           podByTrip[key] = _mergePodMetadata(podByTrip[key], event);
@@ -143,3 +153,5 @@ class ResolutionStrategy {
 
   static final List<ResolutionStrategy> values = [latestWins, earliestWins, serverWins, clientWins];
 }
+
+

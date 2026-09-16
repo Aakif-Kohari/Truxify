@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @openapi
  * components:
  *   schemas:
@@ -411,8 +411,14 @@ router.post('/tickets', authenticate, userLimiter, validateBody(createTicketSche
  */
 router.get('/tickets', authenticate, userLimiter, async (req, res) => {
   const { status, category, page = '1', limit = '20' } = req.query;
-  const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  if (page !== undefined && !/^\d+$/.test(page)) {
+    return res.status(400).json({ error: 'page must be a positive integer' });
+  }
+  if (limit !== undefined && !/^\d+$/.test(limit)) {
+    return res.status(400).json({ error: 'limit must be a positive integer' });
+  }
+  const pageNum = Math.max(1, parseInt(page, 10));
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
   const offset = (pageNum - 1) * limitNum;
 
   const statusResult = parseTicketStatus(status);
@@ -717,8 +723,14 @@ router.patch('/tickets/:id', authenticate, userLimiter, requirePolicy('ticket:up
  */
 router.get('/admin/tickets', authenticate, userLimiter, requirePolicy('ticket:admin-view-all'), auditLog({ action: 'ticket:admin-view-all' }), async (req, res) => {
   const { status, category, user_id, page = '1', limit = '20' } = req.query;
-  const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  if (page !== undefined && !/^\d+$/.test(page)) {
+    return res.status(400).json({ error: 'page must be a positive integer' });
+  }
+  if (limit !== undefined && !/^\d+$/.test(limit)) {
+    return res.status(400).json({ error: 'limit must be a positive integer' });
+  }
+  const pageNum = Math.max(1, parseInt(page, 10));
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
   const offset = (pageNum - 1) * limitNum;
 
   const userIdResult = parseUuidQuery(user_id, 'user_id');
