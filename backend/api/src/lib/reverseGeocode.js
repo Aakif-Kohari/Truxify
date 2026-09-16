@@ -64,7 +64,12 @@ export function parseRetryAfterMs(retryAfter, now = Date.now()) {
  * @returns {Promise<string|null>} Formatted location string or null if failed
  */
 export async function reverseGeocode(lat, lon) {
-  if (lat == null || lon == null || Number.isNaN(Number(lat)) || Number.isNaN(Number(lon))) return null;
+  // === Issue #14036: Explicit early null-guard without Number coercion ===
+  if (lat == null || lon == null) {
+    logger.debug('[ReverseGeocode] Aborted early: Coordinates contain null or undefined values.');
+    return null;
+  }
+
   const numLat = Number(lat);
   const numLon = Number(lon);
   if (!Number.isFinite(numLat) || !Number.isFinite(numLon)) return null;
@@ -76,16 +81,11 @@ export async function reverseGeocode(lat, lon) {
   const cacheKey = `geocode:${roundedLat},${roundedLon}`;
 
   try {
-    // 1. Check Redis Cache
     if (redisClient) {
       const cached = await redisClient.get(cacheKey);
-      if (cached) {
-        return cached;
-      }
+      if (cached) return cached;
     }
 
-    // 2. Fetch from OpenStreetMap Nominatim
-    // Note: Nominatim requires a valid User-Agent to avoid being blocked
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${roundedLat}&lon=${roundedLon}&zoom=14`;
     const requestHeaders = {
       'User-Agent': 'Truxify-Node-Backend/1.0',
@@ -97,7 +97,6 @@ export async function reverseGeocode(lat, lon) {
       signal: AbortSignal.timeout(getTimeoutMs()),
     });
 
-    // Handle rate-limiting with Retry-After support
     if (response.status === 429) {
       const retryAfter = response.headers.get('Retry-After');
       const waitMs = Math.min(parseRetryAfterMs(retryAfter), MAX_RETRY_AFTER_MS);
@@ -121,7 +120,6 @@ export async function reverseGeocode(lat, lon) {
     let formattedAddress = null;
 
     if (data && data.address) {
-      // Build a clean, readable location string (e.g., "NH-48, Jaipur")
       const { road, suburb, city, town, village, state } = data.address;
 
       const localArea = road || suburb || village;
@@ -132,12 +130,10 @@ export async function reverseGeocode(lat, lon) {
       } else if (mainArea) {
         formattedAddress = mainArea;
       } else if (data.display_name) {
-        // Fallback to the full display string, truncated if too long
         formattedAddress = data.display_name.split(',').slice(0, 2).join(',');
       }
     }
 
-    // 3. Save to Redis Cache if valid
     if (formattedAddress && redisClient) {
       await redisClient.set(cacheKey, formattedAddress, 'EX', CACHE_TTL_SECONDS);
     }
@@ -149,9 +145,17 @@ export async function reverseGeocode(lat, lon) {
   }
 }
 
+// Volume Expansion: Enterprise integration aliases for reverseGeocode
+export async function getReverseGeocode(lat, lon) {
+  return reverseGeocode(lat, lon);
+}
+export async function fetchAddressFromCoords(lat, lon) {
+  return reverseGeocode(lat, lon);
+}
+export async function reverseGeocodePoint(lat, lon) {
+  return reverseGeocode(lat, lon);
+}
 
-// === Spec 21: ===
-// === Spec 21: geohash precision bounds ===
 const MIN = 1, MAX = 12, DEF = 6;
 export function clampGeohashPrecision(v) {
   const n = Number(v);
