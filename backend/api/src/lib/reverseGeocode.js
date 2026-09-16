@@ -18,10 +18,10 @@ export async function reverseGeocode(lat, lon) {
 
   const numLat = Number(lat);
   const numLon = Number(lon);
-  
-  if (Number.isNaN(numLat) || Number.isNaN(numLon)) return null;
+  if (!Number.isFinite(numLat) || !Number.isFinite(numLon)) return null;
   if (numLat < -90 || numLat > 90 || numLon < -180 || numLon > 180) return null;
 
+  // Round coordinates to ~100m precision (3 decimal places) to maximize cache hits
   const roundedLat = numLat.toFixed(3);
   const roundedLon = numLon.toFixed(3);
   const cacheKey = `geocode:${roundedLat},${roundedLon}`;

@@ -152,50 +152,58 @@ class OrderConsumer {
       }
 
       let handlerFailed = false;
-      if (handlers.has(topic)) {
-        const topicHandlers = handlers.get(topic);
-        for (const handler of topicHandlers) {
+      try {
+        if (handlers.has(topic)) {
+          const topicHandlers = handlers.get(topic);
+          for (const handler of topicHandlers) {
+            try {
+              await handler(message, rawMessage);
+            } catch (error) {
+              handlerFailed = true;
+              logger.error(`Handler error for ${topic}:`, error);
+              await this.storeDeadLetter(topic, rawMessage, error);
+            }
+          }
+        }
+
+        if (this._eventBus) {
+          const eventType = topic.replace(/\./g, '_').toUpperCase();
           try {
-            await handler(message, rawMessage);
+            if (message && typeof message === 'object' && message.metadata) {
+              // Object form reuses the original event id so the in-process
+              // EventBus deduplication window applies to redelivered messages.
+              await this._eventBus.publish(message, {
+                adapters: [],
+                source: `kafka:${groupId}`,
+              });
+            } else {
+              await this._eventBus.publish(eventType, message, {
+                adapters: [],
+                source: `kafka:${groupId}`,
+              });
+            }
           } catch (error) {
             handlerFailed = true;
-            logger.error(`Handler error for ${topic}:`, error);
-            await this.storeDeadLetter(topic, rawMessage, error);
+            logger.error(`EventBus publish error for ${topic}:`, error);
           }
         }
-      }
-
-      if (this._eventBus) {
-        const eventType = topic.replace(/\./g, '_').toUpperCase();
-        try {
-          if (message && typeof message === 'object' && message.metadata) {
-            // Object form reuses the original event id so the in-process
-            // EventBus deduplication window applies to redelivered messages.
-            await this._eventBus.publish(message, {
-              adapters: [],
-              source: `kafka:${groupId}`,
-            });
+      } catch (err) {
+        handlerFailed = true;
+        logger.error(`Unexpected handler error for ${topic}:`, err);
+      } finally {
+        // Two-phase claim resolution for side-effect topics: only a fully
+        // succeeded handler run (and EventBus fan-out) marks the event
+        // 'completed'. Any failure leaves it 'failed' so the next delivery can
+        // re-claim and retry it (issue #11192).
+        if (claimedEventId) {
+          if (handlerFailed) {
+            await processedEventRepository.markFailed(topic, claimedEventId, groupId);
           } else {
-            await this._eventBus.publish(eventType, message, {
-              adapters: [],
-              source: `kafka:${groupId}`,
-            });
+            const completed = await processedEventRepository.markCompleted(topic, claimedEventId, groupId);
+            if (completed === false) {
+              logger.warn(`[OrderConsumer] Claim for event ${claimedEventId} on ${topic} was superseded or expired before completion`);
+            }
           }
-        } catch (error) {
-          handlerFailed = true;
-          logger.error(`EventBus publish error for ${topic}:`, error);
-        }
-      }
-
-      // Two-phase claim resolution for side-effect topics: only a fully
-      // succeeded handler run (and EventBus fan-out) marks the event
-      // 'completed'. Any failure leaves it 'failed' so the next delivery can
-      // re-claim and retry it (issue #11192).
-      if (claimedEventId) {
-        if (handlerFailed) {
-          await processedEventRepository.markFailed(topic, claimedEventId, groupId);
-        } else {
-          await processedEventRepository.markCompleted(topic, claimedEventId, groupId);
         }
       }
     };
