@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -20,17 +20,17 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  */
 contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
 
-    // ─── Enums ───────────────────────────────────────────────────────────────
+    // â”€â”€â”€ Enums â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     enum BookingStatus {
         Active,       // Payment locked, trip in progress
         Delivered,    // GPS + OTP confirmed, payment released to driver
-        Cancelled,    // Cancelled before driver started — full refund
+        Cancelled,    // Cancelled before driver started â€” full refund
         Disputed,     // Under dispute resolution via n8n automation
-        Resolved      // Dispute settled by owner — funds split per resolution
+        Resolved      // Dispute settled by owner â€” funds split per resolution
     }
 
-    // ─── Structs ─────────────────────────────────────────────────────────────
+    // â”€â”€â”€ Structs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     struct Booking {
         address payable customer;   // Manufacturer who placed the booking
@@ -43,7 +43,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         uint256 disputedAt;         // Block timestamp when dispute was raised
     }
 
-    // ─── State ───────────────────────────────────────────────────────────────
+    // â”€â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     mapping(uint256 => Booking) public bookings;
     uint256 public bookingCount;
@@ -54,7 +54,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
     // valid createBooking requires an owner-signed EIP-191 commitment over
     // (chain, this, customer, bookingId, driver, amount, nonce). Tracking the
     // nonce per bookingId means a customer funding several distinct bookings in
-    // quick succession each carries a distinct, currently-valid nonce — reading
+    // quick succession each carries a distinct, currently-valid nonce â€” reading
     // the nonce once no longer bricks concurrent deposits (issue #13119). The
     // nonce is burned on success so a commitment cannot be replayed after a slot
     // is reused (e.g. cancel + recreate the same bookingId).
@@ -63,7 +63,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
     uint256 public constant DISPUTE_TIMEOUT = 7 days;
     address public trustedRelayer;
 
-    // ─── Events ──────────────────────────────────────────────────────────────
+    // â”€â”€â”€ Events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     event BookingCreated(
         uint256 indexed bookingId,
@@ -78,7 +78,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         uint256 amount
     );
 
-        event DisputeSettled(bytes32 indexed bookingId, address indexed recipient, uint256 amount);
+        event DisputeSettled(uint256 indexed bookingId, address indexed recipient, uint256 amount);
     event BookingCancelled(
         uint256 indexed bookingId,
         address indexed customer,
@@ -124,7 +124,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
 
     event RelayerUpdated(address indexed newRelayer);
 
-    // ─── Constructor ─────────────────────────────────────────────────────────
+    // â”€â”€â”€ Constructor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     constructor() Ownable(msg.sender) {}
 
@@ -135,7 +135,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         revert("TruxifyEscrow: fallback not supported");
     }
 
-    // ─── Modifiers ───────────────────────────────────────────────────────────
+    // â”€â”€â”€ Modifiers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     modifier onlyBookingParticipant(uint256 bookingId) {
         require(
@@ -192,7 +192,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
     /**
      * @dev Release a booking id slot after its escrow is fully settled so the
      *      bookingId can be re-created for a retried/regenerated order
-     *      (issue #7734). Only invoked from the Cancelled terminal paths —
+     *      (issue #7734). Only invoked from the Cancelled terminal paths â€”
      *      Delivered/Resolved ids must never be reused.
      */
     function _releaseBookingSlot(uint256 bookingId) private {
@@ -200,7 +200,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         bookings[bookingId].driver = payable(address(0));
     }
 
-    // ─── External Functions ──────────────────────────────────────────────────
+    // â”€â”€â”€ External Functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * @dev Create a booking and lock payment in escrow.
@@ -288,7 +288,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
      *      Called by the Truxify backend (owner) after both conditions are met.
      *
      * CRITICAL SECURITY INVARIANT: This function is restricted to onlyOwner.
-     * Neither the customer nor the driver may call this directly — all
+     * Neither the customer nor the driver may call this directly â€” all
      * release requests MUST flow through the backend's delivery verification
      * pipeline (OTP generation, OTP verification, GPS geofence confirmation).
      * Any upgradeable variant of this contract MUST preserve this onlyOwner
@@ -317,17 +317,17 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         require(!booking.paid, "TruxifyEscrow: Already paid");
         require(booking.amount > 0, "TruxifyEscrow: Nothing to release");
 
-        // ── CHECKS done above ─────────────────────────────────────────────
+        // â”€â”€ CHECKS done above â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-        // ── EFFECTS: Update state BEFORE external call (CEI pattern) ──────
+        // â”€â”€ EFFECTS: Update state BEFORE external call (CEI pattern) â”€â”€â”€â”€â”€â”€
         uint256 paymentAmount   = booking.amount;
         address payable driver  = booking.driver;
 
-        booking.paid    = true;                      // ← committed first
-        booking.amount  = 0;                         // ← zero out
-        booking.status  = BookingStatus.Delivered;   // ← status updated
+        booking.paid    = true;                      // â† committed first
+        booking.amount  = 0;                         // â† zero out
+        booking.status  = BookingStatus.Delivered;   // â† status updated
 
-        // ── INTERACTIONS: Add to pending withdrawal instead of direct transfer ──
+        // â”€â”€ INTERACTIONS: Add to pending withdrawal instead of direct transfer â”€â”€
         pendingWithdrawals[driver] += paymentAmount;
 
         // Always extend the timeout to protect newly released funds so the
@@ -343,7 +343,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
      * @dev Record that the driver has picked up the goods and the trip has
      *      started. Called by the Truxify backend (owner) when the shipment
      *      reaches the "picked_up" milestone. Once started, a booking can no
-     *      longer be cancelled for a full refund — the customer must go through
+     *      longer be cancelled for a full refund â€” the customer must go through
      *      the penalty/compensation path instead.
      *
      * @param bookingId The booking whose trip has started
@@ -398,7 +398,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         // driver receives nothing (issue #8891).
         require(!booking.started, "TruxifyEscrow: Trip already started");
 
-        // ── EFFECTS ───────────────────────────────────────────────────────
+        // â”€â”€ EFFECTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         uint256 refundAmount    = booking.amount;
         address payable customer = booking.customer;
 
@@ -406,7 +406,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         booking.paid    = true;
         booking.status  = BookingStatus.Cancelled;
 
-        // ── INTERACTIONS: Add to pending withdrawal instead of direct transfer ──
+        // â”€â”€ INTERACTIONS: Add to pending withdrawal instead of direct transfer â”€â”€
         pendingWithdrawals[customer] += refundAmount;
 
         // Always extend the timeout to protect newly refunded funds
@@ -499,7 +499,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
      * @dev Resolve a disputed booking by splitting the escrowed funds between
      *      the driver and the customer. Restricted to onlyOwner (backend) so
      *      disputes are settled through the backend's resolution pipeline
-     *      (n8n automation) — no third party can force an outcome.
+     *      (n8n automation) â€” no third party can force an outcome.
      *
      *      Pass driverAmount == booking.amount to pay the driver in full,
      *      or 0 to refund the customer in full. Any partial amount is split
@@ -578,7 +578,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         );
         require(!booking.paid, "TruxifyEscrow: Already paid");
 
-        // ── EFFECTS: Default to refunding customer ──────────────────────────
+        // â”€â”€ EFFECTS: Default to refunding customer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         uint256 escrowAmount = booking.amount;
         address payable customer = booking.customer;
         address payable driver = booking.driver;
@@ -587,7 +587,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
         booking.paid = true;
         booking.status = BookingStatus.Cancelled;
 
-        // ── INTERACTIONS ──────────────────────────────────────────────────
+        // â”€â”€ INTERACTIONS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         uint256 newDeadline = block.timestamp + WITHDRAWAL_TIMEOUT;
 
         if (booking.started) {
