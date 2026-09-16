@@ -18,7 +18,7 @@ class CarbonTokenService {
    * @param {number} params.loadWeightKg
    * @returns {Object} Minted carbon token metadata
    */
-  async calculateAndMintCarbonCredits({ truckId, tripId, distanceKm, fuelSavedLiters, loadWeightKg }) {
+  async calculateAndMintCarbonCredits({ ownerId, truckId, tripId, distanceKm, fuelSavedLiters, loadWeightKg }) {
     if (!truckId || !tripId || fuelSavedLiters === undefined) {
       throw new Error('Missing required parameters: truckId, tripId, fuelSavedLiters');
     }
@@ -33,6 +33,7 @@ class CarbonTokenService {
 
     const tokenRecord = {
       tokenId,
+      ownerId,
       truckId,
       tripId,
       distanceKm: distanceKm || 0,
@@ -81,8 +82,12 @@ class CarbonTokenService {
   /**
    * Fetches carbon token details by ID
    */
-  async getTokenDetails(tokenId) {
-    return this.tokens.get(tokenId) || null;
+  async getTokenDetails(tokenId, ownerId) {
+    const token = this.tokens.get(tokenId);
+    if (!token || (ownerId && token.ownerId && token.ownerId !== ownerId)) {
+      return null;
+    }
+    return token;
   }
 }
 

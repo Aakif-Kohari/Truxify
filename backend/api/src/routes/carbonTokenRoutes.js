@@ -26,6 +26,7 @@ router.post('/mint', authenticate, userLimiter, async (req, res) => {
     }
 
     const token = await carbonTokenService.calculateAndMintCarbonCredits({
+      ownerId: req.user.id,
       truckId: truck_id,
       tripId: trip_id,
       distanceKm,
@@ -76,7 +77,10 @@ router.post('/purchase', authenticate, userLimiter, async (req, res) => {
 router.get('/:tokenId', authenticate, userLimiter, async (req, res) => {
   try {
     const { tokenId } = req.params;
-    const token = await carbonTokenService.getTokenDetails(tokenId);
+    const token = await carbonTokenService.getTokenDetails(
+      tokenId,
+      req.user.role === 'admin' ? null : req.user.id
+    );
 
     if (!token) {
       return res.status(404).json({ error: 'Carbon credit token not found' });
