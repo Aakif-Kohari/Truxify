@@ -128,7 +128,8 @@ async def multi_objective_optimize(request: RouteRequest):
             request.start_node,
             request.end_node,
             graph_data,
-            request.constraints
+            objectives=request.objectives,
+            constraints=request.constraints
         )
         
         if result:
