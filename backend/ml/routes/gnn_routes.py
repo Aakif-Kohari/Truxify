@@ -5,16 +5,22 @@ import networkx as nx
 import json
 from datetime import datetime
 import logging
+import os
 
 from gnn.models import GraphNetworkBuilder, RouteOptimizer
-import os
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/gnn", tags=["Graph Neural Networks"])
 
-# Initialize GNN components
+# Initialize GNN components with checkpoint / dev_mode awareness
 builder = GraphNetworkBuilder()
-optimizer = RouteOptimizer()
+default_model_path = os.getenv("GNN_MODEL_PATH", "models/gnn_route.pth")
+allow_untrained = os.getenv("DEV_MODE", "false").lower() in ("true", "1") or os.getenv("ALLOW_UNTRAINED_GNN", "false").lower() in ("true", "1")
+
+if os.path.exists(default_model_path):
+    optimizer = RouteOptimizer(model_path=default_model_path, allow_untrained=allow_untrained)
+else:
+    optimizer = RouteOptimizer(allow_untrained=allow_untrained)
 
 class Node(BaseModel):
     id: str
@@ -66,16 +72,36 @@ async def build_graph(nodes: List[Node], edges: List[Edge]):
             },
             'timestamp': datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Graph building failed: {e}")
-        logger.error(f"Internal error: {e}")
-
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/optimize-route")
 async def optimize_route(request: RouteRequest):
     """Optimize route using GNN"""
     try:
+        # Validate that start_node and end_node exist in the request nodes
+        node_ids = {node.id for node in request.nodes}
+        missing = []
+        if request.start_node not in node_ids:
+            missing.append(f"start_node '{request.start_node}'")
+        if request.end_node not in node_ids:
+            missing.append(f"end_node '{request.end_node}'")
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Node(s) not found in graph: {', '.join(missing)}"
+            )
+
+        # Guard serving: verify model is trained or dev mode allows untrained serving
+        if not optimizer.is_trained and not optimizer.allow_untrained:
+            raise HTTPException(
+                status_code=503,
+                detail="GNN Route Optimizer is untrained. Load a trained model checkpoint or train the model before live routing."
+            )
+
         # Build graph
         graph = builder.build_road_network(
             [node.dict() for node in request.nodes],
@@ -106,16 +132,38 @@ async def optimize_route(request: RouteRequest):
                 'error': 'Route optimization failed',
                 'timestamp': datetime.now().isoformat()
             }
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error(f"Route optimization failed: {e}")
-        logger.error(f"Internal error: {e}")
-
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/multi-objective")
 async def multi_objective_optimize(request: RouteRequest):
     """Multi-objective route optimization"""
     try:
+        # Validate that start_node and end_node exist in the request nodes
+        node_ids = {node.id for node in request.nodes}
+        missing = []
+        if request.start_node not in node_ids:
+            missing.append(f"start_node '{request.start_node}'")
+        if request.end_node not in node_ids:
+            missing.append(f"end_node '{request.end_node}'")
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Node(s) not found in graph: {', '.join(missing)}"
+            )
+
+        # Guard serving: verify model is trained or dev mode allows untrained serving
+        if not optimizer.is_trained and not optimizer.allow_untrained:
+            raise HTTPException(
+                status_code=503,
+                detail="GNN Route Optimizer is untrained. Load a trained model checkpoint or train the model before live routing."
+            )
+
         # Build graph
         graph = builder.build_road_network(
             [node.dict() for node in request.nodes],
@@ -143,20 +191,28 @@ async def multi_objective_optimize(request: RouteRequest):
                 'error': 'Multi-objective route optimization failed',
                 'timestamp': datetime.now().isoformat()
             }
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error(f"Multi-objective optimization failed: {e}")
-        logger.error(f"Internal error: {e}")
-
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/train")
 async def train_model(request: TrainRequest):
     """Train GNN model"""
     try:
-        # In production: load training data
+        # Load training data
         train_data = []
         val_data = []
         
+        if not train_data:
+            raise HTTPException(
+                status_code=422,
+                detail="Training dataset is empty. Provide or configure a non-empty training dataset before training."
+            )
+
         loss = optimizer.train(train_data, val_data, request.epochs)
         
         return {
@@ -167,10 +223,12 @@ async def train_model(request: TrainRequest):
             },
             'timestamp': datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"Model training failed: {e}")
-        logger.error(f"Internal error: {e}")
-
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/update-route")
@@ -184,10 +242,10 @@ async def update_route(route: List[Dict], traffic_data: Dict):
             'data': updated_route,
             'timestamp': datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Route update failed: {e}")
-        logger.error(f"Internal error: {e}")
-
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/model/status")
@@ -198,15 +256,17 @@ async def get_model_status():
             'success': True,
             'data': {
                 'model_loaded': optimizer.model is not None,
+                'is_trained': optimizer.is_trained,
+                'allow_untrained': optimizer.allow_untrained,
                 'device': str(optimizer.device),
                 'parameters': sum(p.numel() for p in optimizer.model.parameters()) if optimizer.model else 0
             },
             'timestamp': datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Model status failed: {e}")
-        logger.error(f"Internal error: {e}")
-
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/model/save")
@@ -220,10 +280,10 @@ async def save_model(path: str = "models/gnn_route.pth"):
             'message': f'Model saved to {path}',
             'timestamp': datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Model save failed: {e}")
-        logger.error(f"Internal error: {e}")
-
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/model/load")
@@ -237,8 +297,8 @@ async def load_model(path: str = "models/gnn_route.pth"):
             'message': f'Model loaded from {path}',
             'timestamp': datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Model load failed: {e}")
-        logger.error(f"Internal error: {e}")
-
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error")
