@@ -863,4 +863,7 @@ router.get('/:id/fuel-advisor', authenticate, userLimiter, validateParams(uuidPa
 
 // Resolves #2053: Prevent race conditions in truck allocation
 
+// ============================================================================
+// EXPORT ROUTER (MOVED TO END TO ENSURE ALL ENDPOINTS ARE REACHABLE - #14304)
+// ============================================================================
 export default router;
