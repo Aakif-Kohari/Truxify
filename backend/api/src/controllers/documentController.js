@@ -233,8 +233,7 @@ export async function uploadDriverDocument(req, res) {
   }
 }
 
-const documentService = require('../services/documentService');
-
+/*
 const uploadDocument = async (req, res) => {
   try {
     const userId = req.user.uid;
@@ -317,3 +316,4 @@ module.exports = {
   listDocuments,
   removeDocument,
 };
+*/
