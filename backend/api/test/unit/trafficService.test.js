@@ -129,7 +129,7 @@ describe('trafficService', () => {
       process.env.TOMTOM_API_KEY = 'test-key';
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ flowSegmentData: { speedDiffPercent: 30 } }),
+        json: async () => ({ flowSegmentData: { speedDiffPercent: -30 } }),
       });
       global.fetch = mockFetch;
 
@@ -175,7 +175,7 @@ describe('trafficService', () => {
       process.env.TOMTOM_API_KEY = 'test-key';
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ flowSegmentData: { speedDiffPercent: 50 } }),
+        json: async () => ({ flowSegmentData: { speedDiffPercent: -50 } }),
       });
       global.fetch = mockFetch;
 
@@ -188,7 +188,43 @@ describe('trafficService', () => {
       process.env.TOMTOM_API_KEY = 'test-key';
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ flowSegmentData: { speedDiffPercent: 500 } }),
+        json: async () => ({ flowSegmentData: { speedDiffPercent: -500 } }),
+      });
+      global.fetch = mockFetch;
+
+      const result = await getLiveTrafficMultiplier(23.5, 72.5);
+      expect(result).toBe(2.5);
+    });
+
+    it('raises the surge multiplier when TomTom reports slower traffic (speedDiffPercent -35 => 1.35)', async () => {
+      process.env.TOMTOM_API_KEY = 'test-key';
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ flowSegmentData: { speedDiffPercent: -35 } }),
+      });
+      global.fetch = mockFetch;
+
+      const result = await getLiveTrafficMultiplier(23.5, 72.5);
+      expect(result).toBe(1.35);
+    });
+
+    it('returns 1.0 when TomTom reports free-flow or faster traffic (speedDiffPercent 20 => 1.0)', async () => {
+      process.env.TOMTOM_API_KEY = 'test-key';
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ flowSegmentData: { speedDiffPercent: 20 } }),
+      });
+      global.fetch = mockFetch;
+
+      const result = await getLiveTrafficMultiplier(23.5, 72.5);
+      expect(result).toBe(1.0);
+    });
+
+    it('clamps the TomTom surge multiplier at MAX_SURGE_MULTIPLIER for heavy congestion (speedDiffPercent -400 => 2.5)', async () => {
+      process.env.TOMTOM_API_KEY = 'test-key';
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ flowSegmentData: { speedDiffPercent: -400 } }),
       });
       global.fetch = mockFetch;
 
