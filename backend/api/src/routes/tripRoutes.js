@@ -296,7 +296,7 @@ router.post('/events/batch', authenticate, userLimiter, validateBatchPayload(bat
 
   if (events.length === 0) {
     // Flutter expects 200 or 202 for success.
-    return res.status(200).json({ error: 'Empty batch received, nothing to process.' });
+    return res.status(200).json({ message: 'Empty batch received, nothing to process.' });
   }
 
   try {
@@ -384,7 +384,7 @@ router.post('/events/batch', authenticate, userLimiter, validateBatchPayload(bat
     if (existingBatch) {
       logger.info('[SyncEngine] Ignored duplicate batch:', idempotencyKey);
       // Return 202 Accepted so the Flutter app marks them as synced locally
-      return res.status(202).json({ error: 'Batch already processed.' });
+      return res.status(202).json({ message: 'Batch already processed.' });
     }
 
     const recordsToInsert = events.map(event => {

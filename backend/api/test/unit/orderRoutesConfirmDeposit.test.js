@@ -68,6 +68,7 @@ vi.mock('../../src/middleware/idempotency.js', () => ({
 vi.mock('../../src/lib/redisLock.js', () => ({
   acquireLock: vi.fn(async () => 'lock-value'),
   releaseLock: vi.fn(async () => {}),
+  LockAcquisitionError: class LockAcquisitionError extends Error {},
 }));
 
 vi.mock('../../src/middleware/auditLog.js', () => ({
@@ -85,6 +86,7 @@ vi.mock('../../src/config/db.js', () => ({
   supabase: {},
   mongoDb: {},
   redisClient: {},
+  upstashRedisClient: { set: vi.fn() },
   createUserClient: () => ({}),
 }));
 
@@ -96,9 +98,21 @@ vi.mock('../../src/services/escrow.js', () => ({
     txHash: '0xrefund',
     waitForConfirmation: async () => {},
   })),
+  buildDepositTx: vi.fn(),
+  recordDepositTx: vi.fn(),
+  escrowRefund: vi.fn(),
+  escrowRelease: vi.fn(),
+  submitEscrowCancelWithPenalty: vi.fn(),
+  confirmEscrowRefund: vi.fn(),
+  weiWithinTolerance: vi.fn(() => true),
 }));
 
 vi.mock('../../src/services/notificationService.js', () => ({
+  sendDeliveryOtpNotification: vi.fn(),
+  storeDeliveryOtp: vi.fn(),
+  getActiveDeliveryOtp: vi.fn(),
+  verifyDeliveryOtp: vi.fn(),
+  verifyDeliveryOtpHash: vi.fn(),
   expireDeliveryOtps: vi.fn(),
   sendPushNotification: vi.fn(async () => {}),
 }));
