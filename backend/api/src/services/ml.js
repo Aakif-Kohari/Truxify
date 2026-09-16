@@ -1,5 +1,5 @@
 import logger from '../middleware/logger.js';
-import { validatePricePrediction, convertToPaisa, RejectionReason } from '../lib/predictionValidator.js';
+import { validatePricePrediction, convertToPaisa } from '../lib/predictionValidator.js';
 import { LRUCache } from '../utils/cache.js';
 
 const demandCache = new LRUCache(100, 15 * 60 * 1000);
