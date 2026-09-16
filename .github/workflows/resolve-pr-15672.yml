@@ -1,0 +1,46 @@
+name: Resolve PR 15672 conflict
+
+on:
+  push:
+    branches:
+      - fix/zk-01-withdrawal-proof-binding
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: fix/zk-01-withdrawal-proof-binding
+      BASE_SHA: cee2209db6092ef54f2b6d48cd080d6e910c1f53
+      PATCH_URL: https://github.com/KanishJebaMathewM/Truxify/pull/15672.patch
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild from upstream base and apply PR patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch https://github.com/KanishJebaMathewM/Truxify.git main
+          git reset --hard "$BASE_SHA"
+          git clean -fd
+          curl -fsSL "$PATCH_URL" -o /tmp/pr.patch
+          sed -i 's#^From .*#From patch#' /tmp/pr.patch || true
+          git apply --3way --index /tmp/pr.patch
+
+          cd blockchain
+          npx hardhat compile
+          npx hardhat test test/zkEVM.withdrawalBinding.test.cjs
+          cd ..
+          git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git rm --cached --ignore-unmatch .github/workflows/resolve-pr-15672.yml || true
+          git rm --ignore-unmatch .github/workflows/resolve-pr-15672.yml || true
+          git commit -m "fix(security): resolve PR 15672 onto main"
+          git push --force "origin" "HEAD:$BRANCH"
