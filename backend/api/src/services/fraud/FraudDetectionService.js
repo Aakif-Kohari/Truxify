@@ -69,6 +69,25 @@ class FraudDetectionService {
         this.behavioralProfiles.set(userId, profile);
       }
 
+      // Persist behavioral profile to Supabase to prevent 1-hour amnesia write-hole (#4142)
+      try {
+        const { error: dbErr } = await supabaseAdmin
+          .from('behavioral_profiles')
+          .upsert({
+            user_id: userId,
+            events: profile.events,
+            patterns: profile.patterns,
+            last_activity: new Date(profile.lastActivity || Date.now()).toISOString(),
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id' });
+
+        if (dbErr) {
+          logger.error('[FraudDetection] Failed to persist behavioral profile to DB:', dbErr.message);
+        }
+      } catch (persistenceErr) {
+        logger.error('[FraudDetection] Exception during profile DB persistence:', persistenceErr.message);
+      }
+
       // Queue for batch upsert instead of awaiting individual upsert to prevent event loop blocking
       this.pendingUpserts.set(userId, {
         user_id: userId,
@@ -209,8 +228,9 @@ class FraudDetectionService {
 
     // Track transactions
     if (eventData.type === 'transaction') {
+      const amount = eventData.amount != null ? parseFloat(eventData.amount) || 0 : 0;
       patterns.transactionPatterns.push({
-        amount: eventData.amount,
+        amount,
         type: eventData.transactionType,
         timestamp: Date.now()
       });
@@ -272,7 +292,7 @@ class FraudDetectionService {
 
     // 3. Check transaction patterns
     if (patterns.transactionPatterns.length > 10) {
-      const amounts = patterns.transactionPatterns.map(t => t.amount);
+      const amounts = patterns.transactionPatterns.map(t => (t.amount != null ? parseFloat(t.amount) || 0 : 0));
       const avgAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length;
       const maxAmount = Math.max(...amounts);
       
@@ -588,9 +608,12 @@ class FraudDetectionService {
 
   calculateTransactionRisk(data) {
     let risk = 0;
+    if (!data) return risk;
+
+    const amount = data.amount != null ? parseFloat(data.amount) || 0 : 0;
 
     // Check transaction amount
-    if (data.amount > 100000) {
+    if (amount > 100000) {
       risk += 0.3;
     }
 

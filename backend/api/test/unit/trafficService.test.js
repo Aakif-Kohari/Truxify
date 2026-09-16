@@ -186,14 +186,22 @@ describe('TrafficService Enterprise Test Suite (Issue #14108)', () => {
       expect(result).toBe(1.0);
     });
 
-    it('falls back to heuristic when Google API throws network exception', async () => {
+it('falls back to heuristic when Google API throws network exception', async () => {
       global.fetch.mockRejectedValueOnce(new Error('ECONNRESET'));
       
       const result = await trafficService.getLiveTrafficMultiplier(28.7, 77.1);
       expect(result).toBeGreaterThanOrEqual(1.0);
       expect(logger.error).toHaveBeenCalled();
     });
-  });
+
+    it('returns a multiplier > 1.0 when TomTom API key is set and returns valid data', async () => {
+      process.env.TOMTOM_API_KEY = 'test-key';
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ flowSegmentData: { speedDiffPercent: -30 } }),
+      });
+      global.fetch = mockFetch;
+    });
 
   describe('Rush-Hour Heuristic (Fallback & Boundaries)', () => {
     // Utility to mock system time to a specific UTC hour
@@ -258,7 +266,7 @@ describe('TrafficService Enterprise Test Suite (Issue #14108)', () => {
       process.env.TOMTOM_API_KEY = 'mock_tomtom_key_corrupt';
       global.fetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ unexpectedDataShape: true, flowSegmentData: null })
+      json: async () => ({ unexpectedDataShape: true, flowSegmentData: null }),
       });
       
       const result = await trafficService.getLiveTrafficMultiplier(28.6, 77.2);
@@ -275,6 +283,12 @@ describe('TrafficService Enterprise Test Suite (Issue #14108)', () => {
       
       global.fetch.mockResolvedValueOnce({
         ok: true,
+it('handles deeply nested missing fields in Google Maps API responses', async () => {
+      process.env.GOOGLE_MAPS_API_KEY = 'mock_google_key_corrupt';
+      delete process.env.TOMTOM_API_KEY;
+      
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
         json: async () => ({ routes: [ { legs: [ {} ] } ] }) // strictly missing duration fields
       });
       
@@ -284,6 +298,42 @@ describe('TrafficService Enterprise Test Suite (Issue #14108)', () => {
       expect(result).toBeGreaterThanOrEqual(1.0);
       expect(result).toBeLessThanOrEqual(2.5);
       expect(Number.isFinite(result)).toBe(true);
+    });
+
+    it('raises the surge multiplier when TomTom reports slower traffic (speedDiffPercent -35 => 1.35)', async () => {
+      process.env.TOMTOM_API_KEY = 'test-key';
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ flowSegmentData: { speedDiffPercent: -35 } }),
+      });
+      global.fetch = mockFetch;
+
+      const result = await getLiveTrafficMultiplier(23.5, 72.5);
+      expect(result).toBe(1.35);
+    });
+
+    it('returns 1.0 when TomTom reports free-flow or faster traffic (speedDiffPercent 20 => 1.0)', async () => {
+      process.env.TOMTOM_API_KEY = 'test-key';
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ flowSegmentData: { speedDiffPercent: 20 } }),
+      });
+      global.fetch = mockFetch;
+
+      const result = await getLiveTrafficMultiplier(23.5, 72.5);
+      expect(result).toBe(1.0);
+    });
+
+    it('clamps the TomTom surge multiplier at MAX_SURGE_MULTIPLIER for heavy congestion (speedDiffPercent -400 => 2.5)', async () => {
+      process.env.TOMTOM_API_KEY = 'test-key';
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ flowSegmentData: { speedDiffPercent: -400 } }),
+      });
+      global.fetch = mockFetch;
+
+      const result = await getLiveTrafficMultiplier(23.5, 72.5);
+      expect(result).toBe(2.5);
     });
     
     it('maintains strict thread-safety and limits during high-throughput concurrent geographic queries', async () => {

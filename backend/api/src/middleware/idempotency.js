@@ -1,6 +1,6 @@
 import { redisClient } from '../config/db.js';
 import logger from './logger.js';
-import crypto from 'crypto';
+
 
 const inMemoryStore = new Map();
 const inFlightRequests = new Map(); // In-memory lock for memory-only mode
@@ -87,6 +87,8 @@ export function requireIdempotency(ttlSeconds = 3600) {
     const key = cacheKey(req, idempotencyKey);
 
     try {
+      let pendingCache = null; // <added here
+      let responded = false;
       let cached = null;
 
       if (redisClient) {
@@ -199,9 +201,6 @@ export function requireIdempotency(ttlSeconds = 3600) {
         res.once('finish', releaseMemoryLock);
         res.once('close', releaseMemoryLock);
       }
-
-      let pendingCache = null;
-      let responded = false;
 
       const originalJson = res.json.bind(res);
       res.json = function (body) {
