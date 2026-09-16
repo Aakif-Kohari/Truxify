@@ -1,5 +1,3 @@
-import numpy as np
-
 from . import models as _models
 
 _BaseRouteOptimizer = _models.RouteOptimizer
