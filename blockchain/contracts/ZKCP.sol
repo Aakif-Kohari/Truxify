@@ -43,23 +43,28 @@ contract ZKCP is Ownable {
             amount: msg.value,
             dataHashCommitment: _dataHashCommitment,
             refundTimelock: block.timestamp + _refundDuration,
-            completed: false
+            completed: false,
+            keyRevealed: false
         });
 
         emit PaymentLocked(_agreementId, msg.sender, _seller, msg.value);
     }
 
     /**
-     * @dev Release payment atomically if decryption key matches ZK hash commitment
+     * @dev Release payment securely contingent on valid decryption key and dataset binding (#14779)
      */
-    function claimPayment(bytes32 _agreementId, bytes32 _decryptionKey) external {
+    function claimPayment(
+        bytes32 _agreementId, 
+        bytes32 _decryptionKey, 
+        bytes32 _actualDataHash
+    ) external {
         EscrowAgreement storage agreement = agreements[_agreementId];
         require(!agreement.completed, "Agreement already completed");
         require(msg.sender == agreement.seller, "Only seller can claim");
 
-        // Verify cryptographic commitment matches key
-        bytes32 derivedHash = sha256(abi.encodePacked(_decryptionKey));
-        require(derivedHash == agreement.dataHashCommitment, "Decryption key mismatch");
+        // Cryptographically bind the decryption key and data hash to enforce true ZKCP contingency
+        bytes32 derivedCommitment = sha256(abi.encodePacked(_decryptionKey, _actualDataHash));
+        require(derivedCommitment == agreement.dataHashCommitment, "Data and decryption key commitment mismatch");
 
         agreement.keyRevealed = true;
         agreement.completed = true;
