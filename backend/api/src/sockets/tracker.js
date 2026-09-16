@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { createLocationEventBus } from './locationEventBus.js';
 import telemetryBuffer from './telemetryBuffer.js';
 import GpsLog from '../models/GpsLog.js';
+import { scheduleEtaRecalculationOnLocationUpdate } from '../services/order/etaService.js';
 import DeliveryDelayService from '../services/order/deliveryDelayService.js';
 
 const TELEMETRY_SCHEMA = {
@@ -76,6 +77,7 @@ let redisSubClient = null;
 const TRACKER_CHANNELS = {
   LOCATION: 'tracker:location_updates',
   MILESTONE: 'tracker:milestone_updates',
+  ETA: 'tracker:eta_updates',
 };
 
 function deliverToLocalSubscribers(targetId, payload) {
@@ -93,7 +95,7 @@ function initRedisTrackerPubSub() {
 
   try {
     redisSubClient = redisClient.duplicate();
-    redisSubClient.subscribe(TRACKER_CHANNELS.LOCATION, TRACKER_CHANNELS.MILESTONE, (err) => {
+    redisSubClient.subscribe(TRACKER_CHANNELS.LOCATION, TRACKER_CHANNELS.MILESTONE, TRACKER_CHANNELS.ETA, (err) => {
       if (err) {
         logger.error({ err }, '[Tracker] Failed to subscribe to Redis tracker channels');
       } else {
@@ -109,6 +111,9 @@ function initRedisTrackerPubSub() {
           if (orderDisplayId) deliverToLocalSubscribers(orderDisplayId, payload);
           if (driver_id) deliverToLocalSubscribers(driver_id, payload);
         } else if (channel === TRACKER_CHANNELS.MILESTONE) {
+          const { orderDisplayId, payload } = parsed;
+          if (orderDisplayId) deliverToLocalSubscribers(orderDisplayId, payload);
+        } else if (channel === TRACKER_CHANNELS.ETA) {
           const { orderDisplayId, payload } = parsed;
           if (orderDisplayId) deliverToLocalSubscribers(orderDisplayId, payload);
         }
@@ -1340,6 +1345,17 @@ export async function handleLocationPing(ws, data, req) {
   // client on this replica receives the update exactly once.
   deliverLocationToLocalSubscribers(trackingSubscriptions, broadcastPayload, orderDisplayId ?? null, driver_id);
 
+  if (_orderRepository && orderUUID) {
+    scheduleEtaRecalculationOnLocationUpdate({
+      orderRepository: _orderRepository,
+      driverId: driver_id,
+      orderId: orderUUID,
+      orderDisplayId: orderDisplayId ?? null,
+      lat: sanitized.lat,
+      lng: sanitized.lng,
+    });
+  }
+
   // Publish to Supabase Realtime channel driver-location:{orderId}
   // Reuse cached channel to avoid creating a new channel per ping.
   if (supabase && orderUUID) {
@@ -1462,6 +1478,31 @@ export function broadcastOrderMilestone(orderDisplayId, milestone, status) {
     const pubSubMessage = JSON.stringify({ orderDisplayId, payload });
     redisClient.publish(TRACKER_CHANNELS.MILESTONE, pubSubMessage).catch((err) => {
       logger.error({ err }, '[Tracker] Redis publish error for milestone');
+      deliverToLocalSubscribers(orderDisplayId, payload);
+    });
+  } else {
+    deliverToLocalSubscribers(orderDisplayId, payload);
+  }
+}
+
+export function broadcastOrderEta(orderDisplayId, eta) {
+  if (!orderDisplayId || !eta) return;
+
+  const payload = JSON.stringify({
+    event: 'eta_update',
+    data: {
+      order_display_id: orderDisplayId,
+      eta,
+      timestamp: new Date().toISOString(),
+    },
+  });
+
+  initRedisTrackerPubSub();
+
+  if (redisClient) {
+    const pubSubMessage = JSON.stringify({ orderDisplayId, payload });
+    redisClient.publish(TRACKER_CHANNELS.ETA, pubSubMessage).catch((err) => {
+      logger.error({ err }, '[Tracker] Redis publish error for ETA');
       deliverToLocalSubscribers(orderDisplayId, payload);
     });
   } else {
