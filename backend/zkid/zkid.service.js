@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import logger from '../api/src/middleware/logger.js';
 import { supabase } from '../api/src/config/db.js';
-import { recoverVerificationSigner, verifyProofOwnership } from './proofVerifier.js';
+import { verifyProofOwnership } from './proofVerifier.js';
 
 export class ZKIDService {
     constructor() {
@@ -159,25 +159,8 @@ export class ZKIDService {
      * @returns {Promise<{ verified: boolean, prover?: string, reason?: string }>}
      */
     async verifyProof(proofData, identityHash, credentialHash) {
-        if (!proofData || !ethers.isHexString(proofData) || proofData === ethers.ZeroHash) {
-            return { verified: false, reason: 'Missing or invalid proofData' };
-        }
-
-        let prover;
-        try {
-            prover = recoverVerificationSigner(proofData, identityHash, credentialHash).prover;
-        } catch (err) {
-            logger.error('Proof signature recovery failed:', err);
-            return { verified: false, reason: 'Proof signature recovery failed' };
-        }
-
         const identity = await this.getIdentity(identityHash);
-        const result = verifyProofOwnership(proofData, identityHash, credentialHash, identity);
-        if (!result.verified) {
-            return result;
-        }
-
-        return { verified: true, prover };
+        return verifyProofOwnership(proofData, identityHash, credentialHash, identity);
     }
 
     async requestVerification(identityHash, credentialHash, proofData) {
