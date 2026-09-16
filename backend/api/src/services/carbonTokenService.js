@@ -42,9 +42,9 @@ class CarbonTokenService {
       co2SavedKg,
       co2SavedMetricTons,
       tokenAmount,
-      status: 'MINTED',
-      blockchainTxHash: `0x${Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('')}`,
-      chainNetwork: 'Polygon-CrossChain-Anchor',
+      status: 'PENDING_CHAIN_ANCHOR',
+      blockchainTxHash: null,
+      chainNetwork: null,
       mintedAt: new Date().toISOString()
     };
 
@@ -74,7 +74,7 @@ class CarbonTokenService {
     token.buyerAddress = buyerAddress;
     token.shipperId = shipperId;
     token.retiredAt = new Date().toISOString();
-    token.transferTxHash = `0x${Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('')}`;
+    token.transferTxHash = null;
 
     this.tokens.set(tokenId, token);
     logger.info(`[CarbonTokenService] Carbon token ${tokenId} purchased/retired by shipper ${shipperId}`);
