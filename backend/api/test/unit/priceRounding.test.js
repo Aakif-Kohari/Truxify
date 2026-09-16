@@ -29,6 +29,14 @@ describe('PriceRounding Comprehensive Enterprise Suite (Issue #14102)', () => {
       expect(toPaisa(-0.01)).toBeNull();
     });
 
+    it('floors fractional paisa without rounding upward', () => {
+      // Fractional paisa is always floored down
+      expect(toPaisa(1.5)).toBe(150);
+      expect(toPaisa(1.49)).toBe(149);
+      expect(toPaisa(1.994)).toBe(199);
+      expect(toPaisa(1.996)).toBe(199);
+    });
+
     it('returns null for non-number inputs', () => {
       expect(toPaisa('100')).toBeNull();
       expect(toPaisa(null)).toBeNull();

@@ -1,4 +1,5 @@
 import logger from '../../middleware/logger.js';
+import { supabaseAdmin, supabase } from '../../config/db.js';
 
 /**
  * Payout dispatcher for driver wallet withdrawals.
@@ -139,3 +140,67 @@ export async function recoverSettlementRef({ withdrawalId }) {
     return null;
   }
 }
+
+/**
+ * Retrieves a payout record from Supabase with explicit null guards.
+ * Returns structured error response { error: 'Payout record not found' } instead of null.
+ */
+export async function getPayoutRecord(payoutId, client = supabaseAdmin || supabase) {
+  if (!payoutId) {
+    return { error: 'Payout record not found' };
+  }
+  if (!client) {
+    return { error: 'Payout record not found' };
+  }
+
+  try {
+    const { data: payout, error } = await client
+      .from('payouts')
+      .select('*')
+      .eq('id', payoutId)
+      .maybeSingle();
+
+    if (error || !payout) {
+      const { data: tx, error: txError } = await client
+        .from('wallet_transactions')
+        .select('*')
+        .eq('id', payoutId)
+        .maybeSingle();
+
+      if (txError || !tx) {
+        return { error: 'Payout record not found' };
+      }
+      return tx;
+    }
+
+    return payout;
+  } catch (err) {
+    logger.error(`[PayoutProvider] Failed to fetch payout record: ${err.message}`);
+    return { error: 'Payout record not found' };
+  }
+}
+
+export async function getPayoutStatus(payoutId, client = supabaseAdmin || supabase) {
+  const record = await getPayoutRecord(payoutId, client);
+  if (!record || record.error) {
+    return { error: 'Payout record not found' };
+  }
+  return record;
+}
+
+export async function getPayoutById(payoutId, client = supabaseAdmin || supabase) {
+  return getPayoutRecord(payoutId, client);
+}
+
+export async function getPayout(payoutId, client = supabaseAdmin || supabase) {
+  return getPayoutRecord(payoutId, client);
+}
+
+export async function fetchPayout(payoutId, client = supabaseAdmin || supabase) {
+  return getPayoutRecord(payoutId, client);
+}
+
+export async function fetchPayoutRecord(payoutId, client = supabaseAdmin || supabase) {
+  return getPayoutRecord(payoutId, client);
+}
+

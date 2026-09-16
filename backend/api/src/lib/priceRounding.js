@@ -10,7 +10,7 @@
 
 /**
  * Convert INR to paisa (1 INR = 100 paisa).
- * Rounds to nearest paisa using banker's rounding.
+ * Rounds down to nearest paisa using Math.floor.
  *
  * @param {number} inr - Price in INR
  * @returns {number|null} Price in paisa, or null if invalid
@@ -19,7 +19,7 @@ export function toPaisa(inr) {
   if (typeof inr !== 'number' || !Number.isFinite(inr) || inr < 0) {
     return null;
   }
-  return Math.round(inr * 100 + Number.EPSILON);
+  return Math.floor(inr * 100);
 }
 
 /**

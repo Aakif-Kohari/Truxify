@@ -287,6 +287,14 @@ export async function authenticate(req, res, next) {
   // ── Standard Token Authentication Flow ─────────────────────────────
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    logger.warn(
+      {
+        event: "AUTH_NO_TOKEN",
+        requestId: req.requestId || req.id,
+      },
+      "Missing or malformed Bearer Authorization header",
+    );
+
     return res.status(401).json({
       error: "Access Denied. No token provided.",
       hint: "Include a Bearer token in the Authorization header.",

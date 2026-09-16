@@ -653,6 +653,9 @@ func TestHighConcurrencyIngestion(t *testing.T) {
 	})
 	if mapSize != int(atomic.LoadUint64(&activeDriverCount)) {
 		t.Fatalf("counter %d != map size %d", atomic.LoadUint64(&activeDriverCount), mapSize)
+	}
+}
+
 func TestSweepDriversPrunesStaleGeofenceEntries(t *testing.T) {
 	now := time.Now()
 

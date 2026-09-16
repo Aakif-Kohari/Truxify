@@ -37,3 +37,33 @@ console.error = (...args) => {
   }
   originalError(...args);
 };
+
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
+const { default: RedisMock } = await import('./mocks/redisMock.js');
+
+global.mockRedis = new RedisMock();
+
+beforeEach(() => {
+  global.mockRedis.clear();
+  vi.clearAllMocks();
+});
+
+afterAll(() => {
+  global.mockRedis.clear();
+});
+
+vi.mock('redis', () => {
+  return {
+    createClient: vi.fn(() => ({
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      set: vi.fn((...args) => global.mockRedis.set(...args)),
+      get: vi.fn((...args) => global.mockRedis.get(...args)),
+      del: vi.fn((...args) => global.mockRedis.del(...args)),
+      eval: vi.fn((...args) => global.mockRedis.eval(...args)),
+      on: vi.fn(),
+    })),
+  };
+});
