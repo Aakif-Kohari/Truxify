@@ -38,9 +38,7 @@ def test_mixed_objectives_report_all_invalid_names():
         validate_route_objectives(["time", "invalid_one", "invalid_two", "invalid_one"])
 
     assert exc_info.value.status_code == 422
-    assert "invalid_one" in exc_info.value.detail
-    assert "invalid_two" in exc_info.value.detail
-    assert "time" not in exc_info.value.detail
+    assert "Unsupported route objective(s): 'invalid_one', 'invalid_two'." in exc_info.value.detail
 
 
 def test_all_invalid_objectives_are_rejected():
