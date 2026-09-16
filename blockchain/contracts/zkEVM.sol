@@ -117,7 +117,7 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
         // Process transactions
         bytes32[] memory txHashes = new bytes32[](transactionsData.length);
         for (uint256 i = 0; i < transactionsData.length; i++) {
-            (address from, address to, uint256 value, bytes memory data, uint256 nonce, uint256 gasPrice, uint256 gasLimit, bytes memory signature) = 
+            (address from, address to, uint256 value, bytes memory data, uint256 nonce, uint256 gasPrice, uint256 gasLimit, bytes memory signature) =
                 abi.decode(transactionsData[i], (address, address, uint256, bytes, uint256, uint256, uint256, bytes));
 
             // Batch-level dedup on the canonical tx digest before applying.
@@ -180,8 +180,7 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
         require(amount > 0, "Amount must be > 0");
         require(currentState.balances[msg.sender] >= amount, "Insufficient balance");
 
-        // Verify withdrawal proof — fails closed until a real Groth16 verifier is deployed
-        require(_verifyProof(proof), "Invalid proof");
+        require(_verifyProof(proof, msg.sender, amount), "Invalid proof");
 
         currentState.balances[msg.sender] -= amount;
         payable(msg.sender).transfer(amount);
@@ -317,14 +316,26 @@ contract zkEVM is Ownable, ReentrancyGuard, Pausable {
     }
 
     function _verifyProof(bytes calldata proof) internal view returns (bool) {
-        // A real Groth16/STARK verifier must be configured before withdrawals
-        // or batch execution can ever succeed. Reverting here (instead of
-        // silently failing on the placeholder) makes misconfigurations loud so
-        // user funds are never stranded by an unconfigured proof check.
         require(verifier != address(0), "zkEVM: verifier not configured");
         require(proof.length > 0, "Empty proof");
         (uint[2] memory a, uint[2][2] memory b, uint[2] memory c, uint[2] memory input) =
             abi.decode(proof, (uint[2], uint[2][2], uint[2], uint[2]));
+        return IVerifier(verifier).verifyProof(a, b, c, input);
+    }
+
+    function _verifyProof(
+        bytes calldata proof,
+        address expectedRecipient,
+        uint256 expectedAmount
+    ) internal view returns (bool) {
+        require(verifier != address(0), "zkEVM: verifier not configured");
+        require(proof.length > 0, "Empty proof");
+        (uint[2] memory a, uint[2][2] memory b, uint[2] memory c, uint[2] memory input) =
+            abi.decode(proof, (uint[2], uint[2][2], uint[2], uint[2]));
+
+        require(input[0] == uint256(uint160(expectedRecipient)), "Proof recipient mismatch");
+        require(input[1] == expectedAmount, "Proof amount mismatch");
+
         return IVerifier(verifier).verifyProof(a, b, c, input);
     }
 
