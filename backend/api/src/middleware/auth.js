@@ -1,20 +1,7 @@
 import jwt from 'jsonwebtoken';
 import logger from './logger.js';
-import { supabase, createUserClient } from '../config/supabase.js';
-import { getCachedProfile, setCachedProfile, invalidateCachedProfile, isValidCachedProfile, getCachedSupabaseProfile, setCachedSupabaseProfile, invalidateCachedSupabaseProfile, isValidCachedSupabaseProfile, TOMBSTONE_TTL_SECONDS, TTL_SECONDS } from '../cache/profileCache.js';
-
-let firebaseAdmin = null;
-try {
-  const admin = require('firebase-admin');
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}')),
-    });
-  }
-  firebaseAdmin = admin;
-} catch (err) {
-  logger.warn('Firebase Admin SDK not initialized. Supabase auth will be used as fallback.');
-}
+import { firebaseAdmin, supabase, createUserClient } from '../config/db.js';
+import { getCachedProfile, setCachedProfile, invalidateCachedProfile, isValidCachedProfile, getCachedSupabaseProfile, setCachedSupabaseProfile, invalidateCachedSupabaseProfile, isValidCachedSupabaseProfile, TOMBSTONE_TTL_SECONDS, TTL_SECONDS } from '../lib/profileCache.js';
 
 /**
  * Express Middleware to authenticate API requests using Firebase or Supabase JWT tokens.
@@ -113,7 +100,11 @@ export async function authenticate(req, res, next) {
   const token = authHeader.split(" ")[1];
   req.token = token;
 
-  const secret = process.env.JWT_SECRET || 'truxify-jwt-secret-key';
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    logger.error({ event: "AUTH_CONFIG_MISSING", requestId: req.requestId || req.id }, "JWT_SECRET is not configured");
+    return res.status(503).json({ error: "Authentication is temporarily unavailable." });
+  }
   try {
     const verified = jwt.verify(token, secret);
     if (verified && (verified.id || verified.uid)) {
@@ -318,22 +309,6 @@ export function requireRole(allowedRoles) {
   };
 }
 
-import { firebaseAdmin, supabase, createUserClient } from "../config/db.js";
-import jwt from "jsonwebtoken";
-import {
-  getCachedProfile,
-  setCachedProfile,
-  invalidateCachedProfile,
-  TOMBSTONE_TTL_SECONDS,
-  TTL_SECONDS,
-  isValidCachedProfile,
-  getCachedSupabaseProfile,
-  setCachedSupabaseProfile,
-  invalidateCachedSupabaseProfile,
-  isValidCachedSupabaseProfile,
-} from "../lib/profileCache.js";
-import logger from "./logger.js";
-
 /**
  * Verification helper for direct programmatic calls (e.g., WebSockets, gRPC, workers).
  * Uses Redis caching and single-query DB lookup.
@@ -503,7 +478,7 @@ export async function verifyAuthToken(token) {
 /**
  * Express Middleware to authenticate API requests using Firebase or Supabase JWT tokens.
  */
-export async function authenticate(req, res, next) {
+async function authenticateV2(req, res, next) {
   if (req.user) {
     return next();
   }
@@ -874,7 +849,7 @@ export async function authenticate(req, res, next) {
  * Middleware to restrict route access to specific roles.
  * Must be used after authenticate middleware.
  */
-export function requireRole(allowedRoles) {
+function requireRoleV2(allowedRoles) {
   if (!Array.isArray(allowedRoles) || allowedRoles.length === 0) {
     throw new Error(
       "requireRole middleware requires a non-empty array of allowed roles.",
