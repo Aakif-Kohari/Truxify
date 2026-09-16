@@ -10,7 +10,7 @@ const NOMINATIM_TIMEOUT_MS = 5000;
  *
  * @returns {number} Timeout in milliseconds (minimum 1)
  */
-function getTimeoutMs() {
+export function getTimeoutMs() {
   const configured = Number(process.env.NOMINATIM_TIMEOUT_MS);
   return Number.isFinite(configured) && configured > 0 ? configured : NOMINATIM_TIMEOUT_MS;
 }
