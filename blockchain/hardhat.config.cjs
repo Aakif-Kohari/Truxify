@@ -34,25 +34,51 @@ function getNetworkConfig(name, url, chainId, privateKey) {
 
 module.exports = {
   solidity: {
-    version: "0.8.20",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
+    compilers: [
+      {
+        version: "0.8.20",
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
+          viaIR: true,
+          evmVersion: "cancun",
+        },
       },
-      viaIR: true,
-      // solc 0.8.24 defaults to the shanghai EVM, which has no MCOPY.
-      // OpenZeppelin Contracts 5.x (Bytes.sol) emits mcopy in assembly, so the
-      // whole tree fails to compile without this. Polygon PoS has supported
-      // the cancun opcodes since the Napoli upgrade.
-      evmVersion: "cancun",
-    },
+      {
+        version: "0.8.21",
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
+          viaIR: true,
+          evmVersion: "cancun",
+        },
+      },
+      {
+        version: "0.8.22",
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
+          viaIR: true,
+          evmVersion: "cancun",
+        },
+      },
+      {
+        version: "0.8.23",
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
+          viaIR: true,
+          evmVersion: "cancun",
+        },
+      },
+      {
+        version: "0.8.24",
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
+          viaIR: true,
+          evmVersion: "cancun",
+        },
+      },
+    ],
   },
   networks: {
-    // Local Hardhat network (default — no config needed)
     hardhat: {},
-
-    // Polygon Amoy Testnet (Phase 2 target)
     amoy: {
       url: process.env.POLYGON_AMOY_RPC_URL || "https://rpc-amoy.polygon.technology",
       accounts: process.env.DEPLOYER_PRIVATE_KEY
