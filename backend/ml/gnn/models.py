@@ -503,10 +503,11 @@ class RouteOptimizer:
 
         # Each label stores cumulative objective values, elapsed time, and the simple path.
         labels = {start: [((0.0,) * len(objectives), 0.0, (start,))]}
-        queue = [(tuple(0.0 for _ in objectives), 0.0, start, (start,))]
+        queue = [(tuple(0.0 for _ in objectives), 0.0, (start,))]
 
         while queue:
-            current_values, current_time, current_node, current_path = heapq.heappop(queue)
+            current_values, current_time, current_path = heapq.heappop(queue)
+            current_node = current_path[-1]
 
             if current_node != end:
                 for neighbor in graph_data.graph.neighbors(current_node):
