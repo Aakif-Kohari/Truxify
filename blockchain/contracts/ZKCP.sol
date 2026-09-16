@@ -43,7 +43,6 @@ contract ZKCP is Ownable {
             amount: msg.value,
             dataHashCommitment: _dataHashCommitment,
             refundTimelock: block.timestamp + _refundDuration,
-            keyRevealed: false,
             completed: false
         });
 
