@@ -36,12 +36,28 @@ function getNetworkConfig(name, url, chainId, privateKey) {
   };
 }
 
-subtask(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS).setAction(async (_, { run }) => {
-  const sourcePaths = await run(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS);
+function collectSolidityFiles(directory) {
+  const files = [];
+
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+
+    if (entry.isDirectory()) {
+      files.push(...collectSolidityFiles(entryPath));
+    } else if (entry.isFile() && entry.name.endsWith(".sol")) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
+}
+
+subtask(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS).setAction(async (_, { config }) => {
+  const sourcePaths = collectSolidityFiles(config.paths.sources);
 
   // A handful of repository Solidity sources are committed with a UTF-8 BOM.
-  // Solidity rejects that marker at byte zero, so normalize only those source
-  // files before Hardhat builds its dependency graph.
+  // Solidity rejects that marker at byte zero, so normalize it before Hardhat
+  // builds its dependency graph.
   for (const sourcePath of sourcePaths) {
     const content = fs.readFileSync(sourcePath, "utf8");
     if (content.charCodeAt(0) === 0xfeff) {
