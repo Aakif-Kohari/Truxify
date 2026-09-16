@@ -430,33 +430,54 @@ class RouteOptimizer:
         self.model.eval()
         logger.info(f"✅ Model loaded from {path}")
     
-    def multi_objective_optimization(self, start, end, graph_data, constraints=None):
-        """Multi-objective route optimization"""
-        objectives = [
-            {'name': 'time', 'weight': 0.5},
-            {'name': 'cost', 'weight': 0.3},
-            {'name': 'fuel', 'weight': 0.2}
-        ]
-        
-        # Get Pareto optimal routes
+    def multi_objective_optimization(self, start, end, graph_data, objectives=None, constraints=None):
+        """Optimize a route using the caller-selected set of objectives."""
+        if objectives is None:
+            objectives = ['time', 'cost', 'fuel']
+        elif isinstance(objectives, dict) and constraints is None:
+            # Preserve compatibility with callers that used the previous
+            # fourth positional argument for constraints.
+            constraints = objectives
+            objectives = ['time', 'cost', 'fuel']
+        else:
+            objectives = list(objectives)
+
+        if not objectives:
+            objectives = ['time', 'cost', 'fuel']
+
+        allowed_objectives = {'time', 'cost', 'fuel', 'distance', 'congestion'}
+        invalid_objectives = [objective for objective in objectives if objective not in allowed_objectives]
+        if invalid_objectives:
+            raise ValueError(f"Unsupported objectives: {', '.join(invalid_objectives)}")
+
         routes = []
-        for obj in objectives:
+        for objective in objectives:
             route = self.optimize_route(
-                start, end, graph_data, 
-                objectives=[obj['name']],
+                start, end, graph_data,
+                objectives=[objective],
                 constraints=constraints
             )
             if route:
                 routes.append(route)
-        
+
         if not routes:
             return None
 
-        # Select best route
-        best_route = min(routes, key=lambda x: 
-            sum([obj['weight'] * x.get(f'total_{obj["name"]}', 0) for obj in objectives])
+        weights = {
+            'time': 0.5,
+            'cost': 0.3,
+            'fuel': 0.2,
+            'distance': 0.2,
+            'congestion': 2.0
+        }
+        best_route = min(
+            routes,
+            key=lambda route: sum(
+                weights.get(objective, 1.0) * route.get(f'total_{objective}', 0)
+                for objective in objectives
+            )
         )
-        
+
         return best_route
     
     def real_time_update(self, current_route, new_traffic_data):
