@@ -3,6 +3,7 @@ import logger from "../middleware/logger.js";
 import { verifyAuthToken } from "../middleware/auth.js";
 import { supabase, redisClient } from "../config/db.js";
 import telemetryBuffer from "./telemetryBuffer.js";
+import { CLOCK_SKEW_TOLERANCE_MS } from "./tracker.js";
 
 let io = null;
 
@@ -323,6 +324,23 @@ export function initLocationServer(httpServer) {
       // newer GPS timestamps represent newer positions so we compare them
       // against the driver's stored sequence to detect stale/duplicate updates.
       const gpsTimestamp = parseGpsTimestamp(timestamp);
+
+      // Clock skew validation — mirrors tracker.js::handleLocationPing (#596).
+      // A device clock outside the allowed window would poison the ordering
+      // key, so drop the frame BEFORE the sequence gate: a rejected timestamp
+      // must never advance the Redis `driver:sequence:{driverId}` key.
+      // Same rule as tracker.js: symmetric absolute skew, rejected only when
+      // STRICTLY greater than CLOCK_SKEW_TOLERANCE_MS (the exact boundary is
+      // accepted); parseGpsTimestamp() already falls back to server time for
+      // missing or malformed timestamps.
+      const skewMs = Math.abs(gpsTimestamp.getTime() - Date.now());
+      if (skewMs > CLOCK_SKEW_TOLERANCE_MS) {
+        logger.warn(
+          { driverId, skewMs, toleranceMs: CLOCK_SKEW_TOLERANCE_MS },
+          `[WS][locationServer] GPS timestamp clock skew ${skewMs}ms exceeds tolerance ${CLOCK_SKEW_TOLERANCE_MS}ms — ignoring update.`
+        );
+        return;
+      }
 
       // Out-of-order / duplicate guard (mirrors tracker.js::handleLocationPing).
       // Fails open when Redis is unavailable so a Redis outage never blocks

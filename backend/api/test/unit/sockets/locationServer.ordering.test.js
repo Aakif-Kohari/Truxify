@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // -- Intercept CJS redisMock required by setup.js in ESM mode -----------------
 class SetupRedisMockStub {
@@ -40,7 +40,42 @@ const dbMock = vi.hoisted(() => ({
 }));
 vi.mock("../../../src/config/db.js", () => dbMock);
 
-const { applySequenceGate, parseGpsTimestamp } = await import("../../../src/sockets/locationServer.js");
+// -- Socket.IO mock (handler-level clock-skew tests) ---------------------------
+// The clock-skew guard lives inside the location_update handler, so the tests
+// drive the handler through a fake socket (same style as
+// locationServerDecoupled.test.js) instead of real connections.
+const sio = vi.hoisted(() => {
+  const mkNS = () => ({
+    use: vi.fn(),
+    on: vi.fn(),
+    _to: null,
+    emit: vi.fn(),
+    to(room) { this._to = room; return this; },
+  });
+  const instance = {
+    ns: new Map(),
+    close: vi.fn(),
+    of(name) {
+      if (!this.ns.has(name)) this.ns.set(name, mkNS());
+      return this.ns.get(name);
+    },
+  };
+  return { Server: function MockServer() { return instance; }, instance };
+});
+
+vi.mock("socket.io", () => ({ Server: sio.Server }));
+
+// locationServer.js imports tracker.js (for CLOCK_SKEW_TOLERANCE_MS), which
+// pulls in the GpsLog mongoose model — mock it so the schema never evaluates
+// against the global mongoose test mock.
+vi.mock("../../../src/models/GpsLog.js", () => ({
+  default: { create: vi.fn() },
+  GpsLog: { create: vi.fn() },
+}));
+
+const { applySequenceGate, parseGpsTimestamp, initLocationServer, closeLocationServer } = await import("../../../src/sockets/locationServer.js");
+const telemetryBuffer = (await import("../../../src/sockets/telemetryBuffer.js")).default;
+const loggerMock = (await import("../../../src/middleware/logger.js")).default;
 
 // -- Local ESM Fake Redis ------------------------------------------------------
 function makeFakeRedis(initial = {}) {
@@ -154,5 +189,98 @@ describe("parseGpsTimestamp", () => {
     expect(parseGpsTimestamp("2024-01-15T10:30:00.000Z").toISOString()).toBe("2024-01-15T10:30:00.000Z");
     expect(Number.isNaN(parseGpsTimestamp(undefined).getTime())).toBe(false);
     expect(Number.isNaN(parseGpsTimestamp("invalid").getTime())).toBe(false);
+  });
+});
+
+// -- Clock skew guard (mirrors tracker.js::handleLocationPing) -----------------
+// Same rule as tracker.js: |gpsTimestamp - Date.now()| > CLOCK_SKEW_TOLERANCE_MS
+// rejects the frame BEFORE applySequenceGate can advance the Redis key. A
+// skew of exactly the tolerance is accepted (strictly-greater comparison).
+// A rejected frame must never touch redis.eval, the telemetry buffer or the
+// customer broadcast.
+describe("locationServer - clock skew guard before sequence gate", () => {
+  const NOW = Date.parse("2026-09-16T12:00:00.000Z");
+  const TOLERANCE = 300_000; // tracker.js default ±5 min (env CLOCK_SKEW_TOLERANCE_MS)
+
+  function setupServer() {
+    initLocationServer({});
+    const ns = sio.instance.ns.get("/driver");
+    const onConnection = ns.on.mock.calls.find(([event]) => event === "connection")[1];
+    const socket = {
+      id: "sock-skew",
+      data: { driverId: DRIVER, bookingId: "b1", orderId: null },
+      join: vi.fn(),
+      on: vi.fn(),
+      emit: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    onConnection(socket);
+    const onUpdate = socket.on.mock.calls.find(([event]) => event === "location_update")[1];
+    return { onUpdate };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await closeLocationServer();
+  });
+
+  it("timestamp within tolerance reaches the sequence gate (1 min old)", async () => {
+    const redis = makeFakeRedis();
+    dbMock.redisClient = redis;
+    const { onUpdate } = setupServer();
+
+    await onUpdate({ lat: 12.9, lng: 77.5, timestamp: new Date(NOW - 60_000).toISOString() });
+
+    expect(redis.eval).toHaveBeenCalledTimes(1);
+    expect(Number(redis.eval.mock.calls[0][3])).toBe(NOW - 60_000);
+    expect(telemetryBuffer.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("timestamp exactly at the tolerance boundary reaches the sequence gate", async () => {
+    const redis = makeFakeRedis();
+    dbMock.redisClient = redis;
+    const { onUpdate } = setupServer();
+
+    await onUpdate({ lat: 12.9, lng: 77.5, timestamp: new Date(NOW - TOLERANCE).toISOString() });
+
+    // Strictly-greater comparison: skew === tolerance is accepted.
+    expect(redis.eval).toHaveBeenCalledTimes(1);
+    expect(Number(redis.eval.mock.calls[0][3])).toBe(NOW - TOLERANCE);
+  });
+
+  it("past timestamp beyond tolerance is rejected BEFORE the sequence gate", async () => {
+    const redis = makeFakeRedis();
+    dbMock.redisClient = redis;
+    const { onUpdate } = setupServer();
+
+    await onUpdate({ lat: 12.9, lng: 77.5, timestamp: new Date(NOW - TOLERANCE - 1).toISOString() });
+
+    expect(redis.eval).not.toHaveBeenCalled();
+    expect(telemetryBuffer.enqueue).not.toHaveBeenCalled();
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ driverId: DRIVER }),
+      expect.stringContaining("clock skew")
+    );
+  });
+
+  it("future timestamp beyond tolerance is rejected BEFORE the sequence gate", async () => {
+    const redis = makeFakeRedis();
+    dbMock.redisClient = redis;
+    const { onUpdate } = setupServer();
+
+    await onUpdate({ lat: 12.9, lng: 77.5, timestamp: new Date(NOW + TOLERANCE + 1).toISOString() });
+
+    expect(redis.eval).not.toHaveBeenCalled();
+    expect(telemetryBuffer.enqueue).not.toHaveBeenCalled();
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ driverId: DRIVER }),
+      expect.stringContaining("clock skew")
+    );
   });
 });
