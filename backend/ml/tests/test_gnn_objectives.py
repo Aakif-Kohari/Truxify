@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 pytest.importorskip("torch_geometric")
@@ -59,8 +61,7 @@ def test_multi_objective_optimization_uses_caller_objectives(monkeypatch):
     assert all(call[3] == {"truck_weight": 20.0} for call in calls)
 
 
-@pytest.mark.asyncio
-async def test_multi_objective_endpoint_forwards_request_objectives(monkeypatch):
+def test_multi_objective_endpoint_forwards_request_objectives(monkeypatch):
     captured = {}
 
     class DummyBuilder:
@@ -95,7 +96,7 @@ async def test_multi_objective_endpoint_forwards_request_objectives(monkeypatch)
         fake_multi_objective,
     )
 
-    response = await gnn_routes.multi_objective_optimize(_request(["cost"]))
+    response = asyncio.run(gnn_routes.multi_objective_optimize(_request(["cost"])))
 
     assert response["success"] is True
     assert captured["start"] == "A"
