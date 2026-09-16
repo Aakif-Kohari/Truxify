@@ -459,33 +459,110 @@ class RouteOptimizer:
         
         return best_route
     
-    def real_time_update(self, current_route, new_traffic_data):
-        """Update route based on real-time traffic"""
-        # Update graph with new traffic data
-        for edge in current_route:
-            edge_id = f"{edge['from']}-{edge['to']}"
-            if edge_id in new_traffic_data:
-                edge['time'] = new_traffic_data[edge_id]['time']
-                edge['cost'] = new_traffic_data[edge_id]['cost']
-        
-        # Re-optimize if needed
-        if self._needs_reoptimization(current_route):
-            return self._reoptimize(current_route)
-        
-        return current_route
-    
-    def _needs_reoptimization(self, route):
-        """Check if route needs reoptimization"""
-        # Check if any edge has high congestion
+    def real_time_update(self, current_route, new_traffic_data, graph_data=None,
+                         objectives=None, constraints=None):
+        """Apply traffic updates and reroute through the current road network."""
+        if not current_route:
+            return current_route
+
+        if graph_data is None or not hasattr(graph_data, 'graph'):
+            logger.warning("Real-time rerouting requires graph_data; returning the updated current route")
+            updated_route = [dict(edge) for edge in current_route]
+            self._apply_traffic_to_route(updated_route, new_traffic_data)
+            return updated_route
+
+        graph = graph_data.graph.copy()
+        edge_lookup = {}
+        for u, v in graph.edges:
+            edge_lookup[f"{u}-{v}"] = (u, v)
+            edge_lookup[f"{v}-{u}"] = (u, v)
+
+        changed = False
+        updated_route = [dict(edge) for edge in current_route]
+        for edge_id, update in new_traffic_data.items():
+            if not isinstance(update, dict):
+                continue
+
+            endpoints = edge_lookup.get(edge_id)
+            if endpoints is None:
+                continue
+
+            u, v = endpoints
+            edge_attrs = graph[u][v]
+            for field in ('time', 'cost', 'fuel', 'congestion'):
+                if field in update and update[field] is not None:
+                    value = float(update[field])
+                    if edge_attrs.get(field) != value:
+                        edge_attrs[field] = value
+                        changed = True
+
+        self._apply_traffic_to_route(updated_route, new_traffic_data)
+
+        if not changed:
+            return updated_route
+
+        builder = GraphNetworkBuilder()
+        nodes = [
+            {
+                'id': node_id,
+                'lat': attrs.get('lat', 0),
+                'lng': attrs.get('lng', 0),
+                'traffic': attrs.get('traffic', 0),
+                'road_type': attrs.get('road_type', 'local'),
+                'speed_limit': attrs.get('speed_limit', 50),
+            }
+            for node_id, attrs in graph.nodes(data=True)
+        ]
+        edges = [
+            {
+                'source': u,
+                'target': v,
+                'distance': attrs.get('distance', 0),
+                'time': attrs.get('time', 0),
+                'cost': attrs.get('cost', 0),
+                'fuel': attrs.get('fuel', 0),
+                'congestion': attrs.get('congestion', 0),
+                'hazmat_allowed': attrs.get('hazmat_allowed', True),
+                'max_weight': attrs.get('max_weight'),
+                'max_height': attrs.get('max_height'),
+            }
+            for u, v, attrs in graph.edges(data=True)
+        ]
+        builder.build_road_network(nodes, edges)
+        updated_graph_data = builder.get_pytorch_data()
+
+        start = current_route[0].get('from')
+        end = current_route[-1].get('to')
+        if start is None or end is None:
+            return updated_route
+
+        rerouted = self._reoptimize(
+            start,
+            end,
+            updated_graph_data,
+            objectives or ['time', 'cost', 'fuel'],
+            constraints
+        )
+        return rerouted if rerouted is not None else updated_route
+
+    def _apply_traffic_to_route(self, route, traffic_data):
+        """Apply known traffic updates to a route copy."""
         for edge in route:
-            if edge.get('congestion', 0) > 0.7:
-                return True
-        return False
-    
-    def _reoptimize(self, route):
-        """Re-optimize route with current data"""
-        start = route[0]['from']
-        end = route[-1]['to']
-        # Rebuild graph with current data
-        # In production: use current graph
-        return route
+            edge_id = f"{edge['from']}-{edge['to']}"
+            update = traffic_data.get(edge_id)
+            if not isinstance(update, dict):
+                continue
+            for field in ('time', 'cost', 'fuel', 'congestion'):
+                if field in update and update[field] is not None:
+                    edge[field] = float(update[field])
+
+    def _needs_reoptimization(self, route):
+        """Check if any current route edge has high congestion."""
+        return any(edge.get('congestion', 0) > 0.7 for edge in route)
+
+    def _reoptimize(self, start, end, graph_data, objectives, constraints=None):
+        """Recompute the route over the updated graph."""
+        result = self.optimize_route(start, end, graph_data, objectives, constraints)
+        if result and result.get('success'):
+            return result['route']
+        return None
