@@ -67,7 +67,15 @@ class OracleService {
 
     const confirmedCount = providerResults.filter(r => r.confirmed === true).length;
     const totalProviders = providerResults.length;
-    const hasConsensus = confirmedCount >= ORACLE_THRESHOLD;
+    // === Issue #14786 Fix: Mandatory Customer OTP Enforcement ===
+    const hasConsensus = otpResult.confirmed === true && confirmedCount >= ORACLE_THRESHOLD;
+
+    if (!otpResult.confirmed && (gpsResult.confirmed || statusResult.confirmed)) {
+      logger.warn(
+        { orderId, gpsConfirmed: gpsResult.confirmed, statusConfirmed: statusResult.confirmed },
+        '[OracleSecurity] Potential unauthorized self-confirmation attempt blocked: GPS/Status consensus achieved without mandatory customer OTP.'
+      );
+    }
 
     await this.logOracleResult(orderId, providerResults, hasConsensus);
 
@@ -115,7 +123,7 @@ class OracleService {
       }
 
       if (order.otp_verified === true || otpRecord?.verified === true) {
-        return { confirmed: true, provider: 'OTPVerifier', timestamp: new Date().toISOString() };
+        return { confirmed: true, provider: 'OTPVerifier', reason: 'Already verified', timestamp: new Date().toISOString() };
       }
 
       if (!otpRecord) {
