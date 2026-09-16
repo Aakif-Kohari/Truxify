@@ -1,3 +1,4 @@
+import base64
 import os
 import unittest
 
@@ -52,9 +53,9 @@ class TestCPABE(unittest.TestCase):
         attrs = {"Role: Driver", "TripID: TRIP_1001"}
 
         encoded = self.cipher.encrypt_document(doc_data, policy)["ciphertext_b64"]
-        payload = bytearray(__import__('base64').b64decode(encoded))
+        payload = bytearray(base64.b64decode(encoded))
         payload[-1] ^= 0x01
-        tampered = __import__('base64').b64encode(payload).decode('ascii')
+        tampered = base64.b64encode(payload).decode('ascii')
 
         with self.assertRaises(InvalidTag):
             self.cipher.decrypt_document(tampered, policy, attrs)
