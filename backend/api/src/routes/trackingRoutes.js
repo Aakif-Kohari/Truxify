@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import rateLimit from 'express-rate-limit';
 
 import { authenticate } from '../middleware/auth.js';
@@ -72,6 +72,9 @@ router.post(
       if (terminalStatuses.includes(order.status)) {
         return res.status(400).json({ error: 'Cannot share tracking for completed or cancelled orders' });
       }
+
+      // Revoke any existing active tracking links before creating a new one (#4965)
+      await tokenService.revokeAllForOrder(orderDisplayId);
 
       const tokenData = await tokenService.createToken({
         orderDisplayId,
