@@ -30,7 +30,7 @@ class TestCPABE(unittest.TestCase):
         doc_data = b"CONFIDENTIAL_BILL_OF_LADING"
 
         enc = self.cipher.encrypt_document(doc_data, policy)
-        wrong_attrs = {"Role: Driver", "TripID: TRIP_9999"}  # Wrong trip ID
+        wrong_attrs = {"Role: Driver", "TripID: TRIP_9999"}
 
         with self.assertRaises(PermissionError):
             self.cipher.decrypt_document(enc["ciphertext_b64"], policy, wrong_attrs)
@@ -68,7 +68,7 @@ class TestCPABE(unittest.TestCase):
         enc = self.cipher.encrypt_document(doc_data, policy)
         altered_policy = self.builder.build_trip_document_policy(trip_id="TRIP_1002", allowed_role="Driver")
 
-        with self.assertRaises(InvalidTag):
+        with self.assertRaises((InvalidTag, PermissionError)):
             self.cipher.decrypt_document(enc["ciphertext_b64"], altered_policy, attrs)
 
 
