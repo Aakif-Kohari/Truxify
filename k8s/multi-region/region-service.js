@@ -320,7 +320,20 @@ export class RegionService {
         
         const health = await this.redis.get('regions:health');
         metrics.routing = routingStats;
-        metrics.health = health ? JSON.parse(health) : {};
+
+        if (!health) {
+            metrics.health = {};
+        } else {
+            try {
+                const parsedHealth = JSON.parse(health);
+                metrics.health = parsedHealth && typeof parsedHealth === 'object' && !Array.isArray(parsedHealth)
+                    ? parsedHealth
+                    : {};
+            } catch (error) {
+                logger.warn('Invalid cached region health data; using empty health metrics.', error);
+                metrics.health = {};
+            }
+        }
         
         return metrics;
     }

@@ -196,7 +196,7 @@ export const changeDropSchema = z.object({
 });
 
 export const cancelOrderSchema = z.object({
-  reason: z.string().max(500).optional().nullable(),
+  reason: z.string().trim().min(1, 'Cancellation reason cannot be empty').max(500).optional().nullable(),
 }).strict();
 
 export const updateWalletSchema = z.object({

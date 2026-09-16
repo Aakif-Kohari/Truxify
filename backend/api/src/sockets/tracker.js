@@ -7,6 +7,7 @@ import { createLocationEventBus } from './locationEventBus.js';
 import telemetryBuffer from './telemetryBuffer.js';
 import GpsLog from '../models/GpsLog.js';
 import { scheduleEtaRecalculationOnLocationUpdate } from '../services/order/etaService.js';
+import DeliveryDelayService from '../services/order/deliveryDelayService.js';
 
 const TELEMETRY_SCHEMA = {
   lat: { type: 'number', required: false, min: -90, max: 90 },
@@ -65,6 +66,7 @@ function sanitizeTelemetryData(data) {
 }
 
 let _orderRepository = null;
+let _deliveryDelayService = null;
 
 // In-memory mapping of active client subscriptions (process-local by design;
 // distributed fan-out across replicas is handled by the locationEventBus).
@@ -589,6 +591,7 @@ export function initWebSocketServer(server, orderRepository) {
   }
 
   _orderRepository = orderRepository;
+  _deliveryDelayService = orderRepository ? new DeliveryDelayService({ orderRepository }) : null;
   const MAX_WS_PAYLOAD_BYTES = parseInt(process.env.WS_MAX_PAYLOAD_BYTES, 10) || 4096;
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES });
   wsServer = wss;
@@ -1221,6 +1224,20 @@ export async function handleLocationPing(ws, data, req) {
     } catch (err) {
       logger.error('Failed to resolve order details in tracker:', err.message);
     }
+  }
+
+  // Recalculate ETA only after the authenticated driver/order ownership check
+  // above has succeeded. This is best-effort and never blocks telemetry or
+  // location broadcasts.
+  if (_deliveryDelayService && orderUUID) {
+    void _deliveryDelayService.processLocation({
+      orderId: orderUUID,
+      driverId: driver_id,
+      latitude: sanitized.lat,
+      longitude: sanitized.lng,
+    }).catch((err) => {
+      logger.warn({ err, orderId: orderUUID, driverId: driver_id }, '[Tracker] Delivery ETA update failed');
+    });
   }
 
   // Buffer write with capacity limit. Synchronous, non-blocking enqueue into
