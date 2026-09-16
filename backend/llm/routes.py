@@ -4,7 +4,10 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime
+from uuid import uuid4
 from llm_service import LLMService
 from security import (
     require_user,
@@ -117,13 +120,17 @@ async def fine_tune_model(
     user_id: str = Depends(require_rag_write)
 ):
     """Fine-tune LLM with custom data"""
+    tmp_path = None
     try:
         # Validate upload file
         content = await validate_upload_file(file)
-        with open('training_data.json', 'wb') as f:
+
+        # Write to a unique per-request path to avoid concurrent clobbering
+        fd, tmp_path = tempfile.mkstemp(prefix=f"training_{uuid4().hex}_", suffix=".json")
+        with os.fdopen(fd, 'wb') as f:
             f.write(content)
 
-        result = await llm_service.fine_tune_model('training_data.json')
+        result = await llm_service.fine_tune_model(tmp_path)
         return {
             'success': True,
             'data': result,
@@ -134,6 +141,12 @@ async def fine_tune_model(
     except Exception as e:
         logger.error(f"Fine-tuning failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                logger.warning(f"Failed to remove temp file {tmp_path}")
 
 @router.get("/stats")
 async def get_model_stats(

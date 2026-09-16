@@ -162,3 +162,18 @@ class ConflictResolver {
     }
   }
 }
+
+class ResolutionStrategy {
+  final String name;
+  final int priority;
+  const ResolutionStrategy(this.name, this.priority);
+
+  static const latestWins = ResolutionStrategy('latestWins', 1);
+  static const earliestWins = ResolutionStrategy('earliestWins', 2);
+  static const serverWins = ResolutionStrategy('serverWins', 3);
+  static const clientWins = ResolutionStrategy('clientWins', 4);
+
+  static ResolutionStrategy fromName(String n) => [latestWins, earliestWins, serverWins, clientWins].firstWhere((s) => s.name == n, orElse: () => latestWins);
+
+  static final List<ResolutionStrategy> values = [latestWins, earliestWins, serverWins, clientWins];
+}
