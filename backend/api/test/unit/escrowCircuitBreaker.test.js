@@ -42,9 +42,9 @@ describe('escrowCircuitBreaker', () => {
     expect(await isEscrowPaused()).toBe(false);
   });
 
-  it('isEscrowPaused fails open when Redis is unavailable', async () => {
+  it('isEscrowPaused fails closed when Redis is unavailable', async () => {
     redisMock.get.mockRejectedValue(new Error('down'));
-    expect(await isEscrowPaused()).toBe(false);
+    expect(await isEscrowPaused()).toBe(true);
   });
 
   it('setEscrowPaused(true) opens the circuit and persists a timestamp', async () => {
@@ -79,7 +79,7 @@ describe('escrowCircuitBreaker', () => {
     expect(state).toEqual({ paused: true, pausedAt: '2026-08-11T00:00:00.000Z' });
   });
 
-  it('getPauseState defaults to not paused', async () => {
+  it('getPauseState reports an unknown Redis state as paused', async () => {
     const state = await getPauseState();
     expect(state).toEqual({ paused: false, pausedAt: null });
   });
