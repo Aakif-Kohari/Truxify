@@ -1,6 +1,5 @@
 import { redisClient } from '../config/db.js';
 import logger from './logger.js';
-import crypto from 'crypto';
 
 const inMemoryStore = new Map();
 const inFlightRequests = new Map(); // In-memory lock for memory-only mode
