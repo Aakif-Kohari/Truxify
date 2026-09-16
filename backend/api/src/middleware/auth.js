@@ -305,7 +305,14 @@ export async function authenticate(req, res, next) {
   const token = authHeader.split(" ")[1];
   req.token = token;
 
-  const secret = process.env.JWT_SECRET || 'truxify-jwt-secret-key';
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    logger.error('[auth] JWT_SECRET is not configured - refusing to verify tokens with insecure fallback');
+    return res.status(500).json({
+      error: 'Authentication service misconfigured.',
+    });
+  }
+  const secret = jwtSecret;
   try {
     const verified = jwt.verify(token, secret);
     if (verified && (verified.id || verified.uid)) {
@@ -318,7 +325,9 @@ export async function authenticate(req, res, next) {
       };
       return next();
     }
-  } catch (_) {}
+  } catch (err) {
+    logger.warn({ err: err?.message }, '[auth] Local JWT verification failed');
+  }
 
   try {
     let decoded;
