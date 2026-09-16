@@ -27,6 +27,17 @@ class ARLoadingOptimizerService {
       maxPayloadKg = 20000
     } = container;
 
+    const containerValues = [lengthCm, widthCm, heightCm, maxPayloadKg];
+    if (containerValues.some((value) => !Number.isFinite(value) || value <= 0)) {
+      throw new Error('Container dimensions and payload must be positive finite numbers');
+    }
+    if (pallets.some((pallet) => {
+      const values = [pallet.lengthCm, pallet.widthCm, pallet.heightCm, pallet.weightKg];
+      return values.some((value) => value !== undefined && (!Number.isFinite(value) || value <= 0));
+    })) {
+      throw new Error('Pallet dimensions and weight must be positive finite numbers');
+    }
+
     const totalContainerVolume = lengthCm * widthCm * heightCm;
     let totalWeightKg = 0;
     let totalPalletVolume = 0;
