@@ -59,4 +59,4 @@ class RedisMock {
     }
 }
 
-module.exports = RedisMock;
+export default RedisMock;
