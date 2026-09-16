@@ -165,7 +165,7 @@ class OrderReadModel {
         const last = events[events.length - 1];
         snapshot = {
           orderId,
-          status: last.payload?.status ?? 'created',
+          status: last.status ?? last.payload?.status ?? 'created',
           data: last.payload || {},
           timeline: [],
           eventType: last.event_type,
@@ -189,7 +189,7 @@ class OrderReadModel {
         };
       }
 
-      await this.upsertFromSnapshot(orderId, snapshot);
+      await this.updateReadModel(orderId, snapshot);
       return snapshot;
     } catch (error) {
       logger.error('Failed to build read model:', error);
@@ -272,7 +272,6 @@ class OrderReadModel {
 
     try {
       const { data, error } = await supabase
-        .from('orders_read_model')
         .from(ORDER_READ_MODEL_TABLE)
         .select('*')
         .eq('order_id', key)
@@ -356,11 +355,11 @@ class OrderReadModel {
    */
   async getOrderStats() {
     const statuses = ['pending', 'truck_assigned', 'en_route_pickup', 'arrived_pickup', 'picked_up', 'in_transit', 'arriving', 'delivered', 'payment_released', 'cancelled'];
-    const stats = {};
+    const stats = { settled: 0 };
+    for (const s of statuses) { stats[s] = 0; }
 
     for (const status of statuses) {
       const { count, error } = await supabase
-        .from('orders_read_model')
         .from(ORDER_READ_MODEL_TABLE)
         .select('*', { count: 'exact', head: true })
         .eq('payload->>status', status);
