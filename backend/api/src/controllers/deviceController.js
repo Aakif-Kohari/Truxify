@@ -2,6 +2,7 @@ import { supabase, supabaseAdmin } from '../config/db.js';
 import logger from '../middleware/logger.js';
 import { errorResponse } from '../utils/apiResponse.js';
 import { AppError, UnauthorizedError, ValidationError } from '../utils/errors.js';
+import notificationService from '../services/notificationService.js';
 
 const VALID_PLATFORMS = ['android', 'ios', 'web'];
 
@@ -60,18 +61,21 @@ function normalizeMetadata(metadata) {
 export async function registerDeviceToken(req, res, next) {
   try {
     const userId = req.user?.id;
-    const { fcmToken, platform, metadata, deviceId } = req.body;
+    // Support both 'fcmToken' (original) and 'fcm_token' (new snippet)
+    const { fcmToken, fcm_token, platform, device_type, device_model, metadata, deviceId } = req.body;
+    
+    const finalToken = fcmToken || fcm_token;
 
     if (!userId) {
       return next(new UnauthorizedError('User not authenticated'));
     }
 
-    const tokenErr = validateFcmToken(fcmToken);
+    const tokenErr = validateFcmToken(finalToken);
     if (tokenErr) {
       return res.status(400).json({ error: tokenErr });
     }
 
-    const platErr = validatePlatform(platform);
+    const platErr = validatePlatform(platform || device_type);
     if (platErr) {
       return next(new ValidationError(platErr));
     }
@@ -96,7 +100,7 @@ export async function registerDeviceToken(req, res, next) {
     const { data: existingDevice, error: lookupError } = await supabaseAdmin
       .from('user_devices')
       .select('user_id')
-      .eq('fcm_token', fcmToken)
+      .eq('fcm_token', finalToken)
       .maybeSingle();
 
     if (lookupError) {
@@ -116,12 +120,14 @@ export async function registerDeviceToken(req, res, next) {
     // than trusting client input.
     const { error: rpcError } = await supabaseAdmin.rpc('register_device_token', {
       p_user_id:      userId,
-      p_fcm_token:    fcmToken,
-      p_platform:     platform || 'android',
+      p_fcm_token:    finalToken,
+      p_platform:     platform || device_type || 'android',
       p_metadata:     normalizedMetadata,
       p_prev_user_id: previousUserId ?? null,
       p_device_id:    deviceId ?? null,
       p_last_seen:    new Date().toISOString(),
+      // Pass additional fields if the RPC supports them, otherwise they are ignored
+      p_device_model: device_model ?? null, 
     });
 
     if (rpcError) {
@@ -149,13 +155,15 @@ export async function registerDeviceToken(req, res, next) {
 export async function unregisterDeviceToken(req, res, next) {
   try {
     const userId = req.user?.id;
-    const { fcmToken } = req.body;
+    // Support both 'fcmToken' and 'fcm_token'
+    const { fcmToken, fcm_token } = req.body;
+    const finalToken = fcmToken || fcm_token;
 
     if (!userId) {
       return next(new UnauthorizedError('User not authenticated'));
     }
 
-    const tokenErr = validateFcmToken(fcmToken);
+    const tokenErr = validateFcmToken(finalToken);
     if (tokenErr) {
       return res.status(400).json({
         success: false,
@@ -165,7 +173,7 @@ export async function unregisterDeviceToken(req, res, next) {
 
     const { data: deletedRows, error: rpcError } = await supabaseAdmin.rpc('unregister_device_token', {
       p_user_id:   userId,
-      p_fcm_token: fcmToken,
+      p_fcm_token: finalToken,
     });
 
     if (rpcError) {
@@ -187,6 +195,7 @@ export async function unregisterDeviceToken(req, res, next) {
       .from('user_devices')
       .select('fcm_token')
       .eq('user_id', userId)
+      .eq('is_active', true)
       .limit(1)
       .maybeSingle();
 
@@ -281,3 +290,42 @@ export async function getDevicePlatforms(req, res, next) {
     return next(err);
   }
 }
+
+/**
+ * Prune stale inactive devices.
+ * Removes device records that have been deactivated for longer than 30 days.
+ * This keeps the user_devices table clean and prevents accumulation of 
+ * permanently-invalid tokens.
+ */
+export async function pruneDevices(req, res, next) {
+  try {
+    // Default to 30 days if not specified in query params
+    const days = parseInt(req.query.days, 10) || 30;
+    
+    if (days < 1 || days > 365) {
+      return res.status(400).json({
+        success: false,
+        error: 'Days parameter must be between 1 and 365'
+      });
+    }
+
+    const result = await notificationService.pruneStaleDevices(days);
+    
+    return res.status(200).json({ 
+      success: true, 
+      message: `Successfully pruned ${result.pruned} stale devices`,
+      pruned: result.pruned
+    });
+  } catch (err) {
+    logger.error('[DeviceController] Unexpected error in pruneDevices:', err.message);
+    return next(new AppError('Failed to prune stale devices', 500));
+  }
+}
+
+export default {
+  registerDeviceToken,
+  unregisterDeviceToken,
+  unregisterAllDeviceTokens,
+  getDevicePlatforms,
+  pruneDevices
+};

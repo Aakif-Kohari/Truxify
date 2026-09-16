@@ -26,9 +26,27 @@ class OracleService {
   }
 
   getStatus() {
+    const chainlinkEnabled = process.env.CHAINLINK_ENABLED === 'true';
+    const backupOracleEnabled = process.env.BACKUP_ORACLE_ENABLED === 'true';
+
+    // Parsed threshold falls back to the module default (ORACLE_THRESHOLD)
+    // if the env var is unset or not a valid positive integer.
+    const parsedThreshold = Number.parseInt(process.env.ORACLE_CONSENSUS_THRESHOLD, 10);
+    const threshold = Number.isInteger(parsedThreshold) && parsedThreshold > 0
+      ? parsedThreshold
+      : ORACLE_THRESHOLD;
+
+    // Core providers (OTP, GPS, order-status) are always active. Chainlink
+    // and the backup oracle are optional and toggled via env config.
+    const activeProviders = ORACLE_PROVIDER_COUNT
+      + (chainlinkEnabled ? 1 : 0)
+      + (backupOracleEnabled ? 1 : 0);
+
     return {
-      providers: 3,
-      threshold: 2,
+      providers: activeProviders,
+      threshold,
+      chainlinkEnabled,
+      backupOracleEnabled,
       timestamp: new Date().toISOString(),
     };
   }
