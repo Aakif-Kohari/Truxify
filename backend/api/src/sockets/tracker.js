@@ -8,6 +8,7 @@ import telemetryBuffer from './telemetryBuffer.js';
 import GpsLog from '../models/GpsLog.js';
 import { scheduleEtaRecalculationOnLocationUpdate } from '../services/order/etaService.js';
 import DeliveryDelayService from '../services/order/deliveryDelayService.js';
+import { calculateAdaptiveInterval, getQueueDepth } from './adaptivePoller.js';
 
 const TELEMETRY_SCHEMA = {
   lat: { type: 'number', required: false, min: -90, max: 90 },
