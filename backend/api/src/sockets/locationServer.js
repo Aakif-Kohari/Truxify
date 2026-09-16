@@ -1,10 +1,13 @@
-import { Server } from "socket.io";
+﻿code backend/api/src/sockets/tracker.jscode backend/api/src/sockets/tracker.jsimport { Server } from "socket.io";
 import logger from "../middleware/logger.js";
 import { verifyAuthToken } from "../middleware/auth.js";
 import { supabase } from "../config/db.js";
 import telemetryBuffer from "./telemetryBuffer.js";
+import { scheduleEtaRecalculationOnLocationUpdate } from "../services/order/etaService.js";
+import { OrderRepository } from "../repositories/orderRepository.js";
 
 let io = null;
+let _orderRepository = null;
 
 // ─── Heartbeat / dead-connection sweep ───────────────────────────────────────
 
@@ -233,6 +236,7 @@ export function initLocationServer(httpServer) {
         return;
       }
 
+      // Ensure timestamp is properly parsed via helper
       const gpsTimestamp = parseGpsTimestamp(timestamp);
 
       // 1. Buffer GPS point into the shared telemetry pipeline. Synchronous and
@@ -385,13 +389,6 @@ async function verifyDriverToken(socket, next) {
       return next(new Error("Authentication required: no token provided"));
     }
 
-    // In BYPASS_AUTH mode (local dev), skip verification
-    if (process.env.BYPASS_AUTH === "true" && process.env.NODE_ENV !== "production") {
-      socket.data.driverId = socket.handshake.auth.driverId || "dev-driver";
-      socket.data.bookingId = socket.handshake.auth.bookingId || "dev-booking";
-      return next();
-    }
-
     const profile = await verifyAuthToken(token);
 
     if (profile.role !== "driver") {
@@ -429,11 +426,6 @@ async function verifyCustomerToken(socket, next) {
 
     if (!token) {
       return next(new Error("Authentication required: no token provided"));
-    }
-
-    if (process.env.BYPASS_AUTH === "true" && process.env.NODE_ENV !== "production") {
-      socket.data.customerId = socket.handshake.auth.customerId || "dev-customer";
-      return next();
     }
 
     const profile = await verifyAuthToken(token);
@@ -495,6 +487,26 @@ async function verifyBookingOwnership(customerId, bookingId) {
   } catch (err) {
     logger.error({ err }, '[WS] isCustomerAuthorized error');
     return false;
+  }
+}
+
+/**
+ * Broadcasts an ETA update to customers subscribed to a booking room.
+ * Mirrors the tracker.js `eta_update` event payload for Socket.IO clients.
+ */
+export function emitEtaUpdateToBooking(bookingId, eta) {
+  if (!io || !bookingId || !eta) return;
+
+  try {
+    io.of("/customer")
+      .to(`booking:${bookingId}`)
+      .emit("eta_update", {
+        eta,
+        bookingId,
+        timestamp: new Date().toISOString(),
+      });
+  } catch (error) {
+    logger.error({ bookingId, error: error.message }, '[WS] ETA broadcast error');
   }
 }
 

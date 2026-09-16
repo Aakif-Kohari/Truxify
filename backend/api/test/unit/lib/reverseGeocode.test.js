@@ -6,15 +6,15 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../../../middleware/logger.js', () => ({
+vi.mock('../../../src/middleware/logger.js', () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock('../../../config/db.js', () => ({
+vi.mock('../../../src/config/db.js', () => ({
   redisClient: null,
 }));
 
-describe('getTimeoutMs (via reverseGeocode import)', async () => {
+describe('getTimeoutMs', async () => {
   const original = process.env.NOMINATIM_TIMEOUT_MS;
 
   afterEach(() => {
@@ -25,23 +25,58 @@ describe('getTimeoutMs (via reverseGeocode import)', async () => {
     }
   });
 
-  it('uses default 5000ms when env not set', async () => {
+  it('uses default 5000ms when env is not set', async () => {
     delete process.env.NOMINATIM_TIMEOUT_MS;
-    vi.resetModules();
-    const { reverseGeocode } = await import('../../../src/lib/reverseGeocode.js');
-    // reverseGeocode returns null for null lat (which triggers early return without API call)
-    // The getTimeoutMs is called during the API request, so we test it via the URL construction
-    // by verifying it doesn't throw
-    const result = await reverseGeocode(null, null);
-    expect(result).toBeNull();
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
   });
 
-  it('uses custom timeout from env variable', async () => {
+  it('uses custom timeout from env variable when valid positive number', async () => {
     process.env.NOMINATIM_TIMEOUT_MS = '3000';
-    vi.resetModules();
-    const { reverseGeocode } = await import('../../../src/lib/reverseGeocode.js');
-    const result = await reverseGeocode(null, null);
-    expect(result).toBeNull();
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(3000);
+  });
+
+  it('falls back to default 5000ms when env is an empty string', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is whitespace', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '   ';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is zero', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '0';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is negative', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = '-1000';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is NaN or non-numeric string', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = 'NaN';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+
+    process.env.NOMINATIM_TIMEOUT_MS = 'invalid';
+    expect(getTimeoutMs()).toBe(5000);
+  });
+
+  it('falls back to default 5000ms when env is Infinity or -Infinity', async () => {
+    process.env.NOMINATIM_TIMEOUT_MS = 'Infinity';
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs()).toBe(5000);
+
+    process.env.NOMINATIM_TIMEOUT_MS = '-Infinity';
+    expect(getTimeoutMs()).toBe(5000);
   });
 });
 

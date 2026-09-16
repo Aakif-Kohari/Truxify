@@ -35,6 +35,9 @@ const {
   sendDeliveryOtpNotification,
   hashDeliveryOtp,
   verifyDeliveryOtpHash,
+  getUserFcmToken,
+  isTransientError,
+  clearInvalidToken,
 } = await import('../../src/services/notificationService.js');
 
 function okBatch(tokens) {
@@ -491,8 +494,8 @@ describe('notificationService', () => {
     });
   });
 
-  describe('sendDeliveryOtpNotification (#12329)', () => {
-    it('delivers the plaintext OTP to the customer via the FCM data payload', async () => {
+  describe('sendDeliveryOtpNotification (#15414)', () => {
+    it('delivers the supplied plaintext OTP to the customer via the FCM data payload', async () => {
       const otp = '654321';
       // Provide an FCM token so the push actually reaches firebaseAdmin.send.
       mockMaybeSingle.mockResolvedValue({ data: { fcm_token: 'fcm-token-xyz' }, error: null });
@@ -530,6 +533,121 @@ describe('notificationService', () => {
       const legacyHash = crypto.createHash('sha256').update('123456').digest('hex');
       expect(verifyDeliveryOtpHash('123456', { otp_hash: legacyHash })).toBe(true);
       expect(verifyDeliveryOtpHash('999999', { otp_hash: legacyHash })).toBe(false);
+    });
+  });
+
+  describe('getUserFcmToken helper', () => {
+    beforeEach(() => {
+      supabaseMock.reset();
+    });
+
+    it('returns FCM token when active device token exists', async () => {
+      seedDevices([{ fcm_token: 'device-token-123' }]);
+      const token = await getUserFcmToken('user-1');
+      expect(token).toBe('device-token-123');
+    });
+
+    it('returns profile FCM token when no active devices exist', async () => {
+      supabaseMock.store.user_devices = [];
+      supabaseMock.store.profiles = [{ id: 'user-1', fcm_token: 'profile-token-456' }];
+      const token = await getUserFcmToken('user-1');
+      expect(token).toBe('profile-token-456');
+    });
+
+    it('returns null when no token exists for user', async () => {
+      supabaseMock.store.user_devices = [];
+      supabaseMock.store.profiles = [{ id: 'user-1', fcm_token: null }];
+      const token = await getUserFcmToken('user-1');
+      expect(token).toBeNull();
+    });
+
+    it('returns null and logs error when DB call throws an error', async () => {
+      const errorMock = vi.fn().mockImplementation(() => { throw new Error('DB Connection Failed'); });
+      const originalFrom = supabaseMock.supabase.from;
+      supabaseMock.supabase.from = errorMock;
+
+      const token = await getUserFcmToken('user-1');
+      expect(token).toBeNull();
+
+      supabaseMock.supabase.from = originalFrom;
+    });
+  });
+
+  describe('isTransientError helper', () => {
+    it('returns true for status codes 429, 500, 503', () => {
+      expect(isTransientError(429)).toBe(true);
+      expect(isTransientError(500)).toBe(true);
+      expect(isTransientError(503)).toBe(true);
+      expect(isTransientError('429')).toBe(true);
+      expect(isTransientError('500')).toBe(true);
+      expect(isTransientError('503')).toBe(true);
+      expect(isTransientError({ status: 500 })).toBe(true);
+      expect(isTransientError({ code: 429 })).toBe(true);
+    });
+
+    it('returns false for status codes 400, 401', () => {
+      expect(isTransientError(400)).toBe(false);
+      expect(isTransientError(401)).toBe(false);
+      expect(isTransientError('400')).toBe(false);
+      expect(isTransientError('401')).toBe(false);
+      expect(isTransientError({ status: 400 })).toBe(false);
+    });
+
+    it('returns true for FCM transient error codes', () => {
+      expect(isTransientError('messaging/unavailable')).toBe(true);
+      expect(isTransientError('messaging/internal-error')).toBe(true);
+      expect(isTransientError('messaging/server-unavailable')).toBe(true);
+      expect(isTransientError({ code: 'messaging/unavailable' })).toBe(true);
+    });
+
+    it('returns false for FCM permanent or invalid payload error codes', () => {
+      expect(isTransientError('messaging/invalid-registration-token')).toBe(false);
+      expect(isTransientError('messaging/registration-token-not-registered')).toBe(false);
+      expect(isTransientError('messaging/invalid-argument')).toBe(false);
+    });
+
+    it('returns false for falsy or unknown input', () => {
+      expect(isTransientError(null)).toBe(false);
+      expect(isTransientError(undefined)).toBe(false);
+      expect(isTransientError('unknown_error')).toBe(false);
+    });
+  });
+
+  describe('clearInvalidToken helper', () => {
+    beforeEach(() => {
+      supabaseMock.reset();
+      supabaseMock.store.profiles = [{ id: 'user-1', fcm_token: 'invalid-token-abc' }];
+    });
+
+    it('calls profile update to clear fcm_token on invalid token', async () => {
+      const result = await clearInvalidToken('user-1', 'invalid-token-abc');
+      expect(result).toBe(true);
+      const profile = supabaseMock.store.profiles.find((p) => p.id === 'user-1');
+      expect(profile.fcm_token).toBeNull();
+      expect(profile.fcm_token_updated_at).toBeTruthy();
+    });
+  });
+
+  describe('transient error retry exhaustion in sendFcmNotification', () => {
+    beforeEach(() => {
+      supabaseMock.reset();
+      firebaseMock.sendEachForMulticast.mockReset();
+      supabaseMock.store.profiles = [{ id: 'user-1', fcm_token: null }];
+    });
+
+    it('exhausts all retries on repeated transient failures and returns success:false with summary tracking', async () => {
+      seedDevices([{ fcm_token: 'token-a' }]);
+      const transientErr = new Error('Service Unavailable');
+      transientErr.code = 'messaging/unavailable';
+      firebaseMock.sendEachForMulticast.mockRejectedValue(transientErr);
+
+      const result = await sendFcmNotification('user-1', { title: 'Hi', body: 'There' }, {});
+
+      expect(firebaseMock.sendEachForMulticast).toHaveBeenCalledTimes(3);
+      expect(result.success).toBe(false);
+      expect(result.summary.transient).toBe(1);
+      expect(result.summary.delivered).toBe(0);
+      expect(result.summary.deactivated).toBe(0);
     });
   });
 });

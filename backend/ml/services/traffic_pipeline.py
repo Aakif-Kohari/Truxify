@@ -23,7 +23,7 @@ import redis
 import os
 import logging
 from functools import partial
-from collections import deque, defaultdict
+from collections import deque, OrderedDict
 
 logger = logging.getLogger(__name__)
 Base = declarative_base()
@@ -60,6 +60,8 @@ class TrafficData(Base):
     hour = Column(Integer)
 
 class TrafficPipeline:
+    MAX_ROUTE_WINDOWS = 1000
+
     def __init__(self, db_url: str, redis_url: str):
         self.engine = create_engine(db_url)
         Base.metadata.create_all(self.engine)
@@ -68,11 +70,20 @@ class TrafficPipeline:
         self.model = self._load_or_create_model()
         self.gmaps_api_key = os.getenv('GOOGLE_MAPS_API_KEY', '')
         self.osrm_url = os.getenv('OSRM_URL', 'http://localhost:5000')
+        self.traffic_connect_timeout = float(
+            os.getenv('TRAFFIC_CONNECT_TIMEOUT', '2')
+        )
+        self.traffic_total_timeout = float(
+            os.getenv('TRAFFIC_TOTAL_TIMEOUT', '5')
+        )
         self._closed = False
         # Rolling per-route history of recent feature rows, fed to predict_eta
         # as a genuine 60-step sequence instead of a tiled constant row
         # (issue #11666).
-        self._route_windows = defaultdict(lambda: deque(maxlen=60))
+        self._route_windows = OrderedDict()
+        self._max_route_windows = self.MAX_ROUTE_WINDOWS
+        self._osrm_failure_count = 0
+        self._osrm_circuit_open = False
 
     def close(self):
         """Dispose DB connection pool and close Redis connection.
@@ -189,10 +200,10 @@ class TrafficPipeline:
             return None
     
     async def _fetch_gmaps_traffic(self, source: Dict, dest: Dict):
-        """Fetch traffic data from Google Maps API"""
+        """Fetch traffic data from Google Maps API with timeout and fallback."""
         if not self.gmaps_api_key:
             return {}
-            
+
         url = "https://maps.googleapis.com/maps/api/directions/json"
         params = {
             'origin': f"{source['lat']},{source['lng']}",
@@ -201,37 +212,97 @@ class TrafficPipeline:
             'traffic_model': 'best_guess',
             'key': self.gmaps_api_key
         }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                data = await response.json()
-                if data.get('routes'):
-                    route = data['routes'][0]['legs'][0]
-                    duration = route.get('duration_in_traffic', {}).get('value', 0)
-                    normal_duration = route.get('duration', {}).get('value', 1)
-                    
-                    return {
-                        'duration': duration,
-                        'speed': route.get('distance', {}).get('value', 0) / duration if duration > 0 else 50,
-                        'congestion': (duration / normal_duration - 1.0) if normal_duration > 0 else 0
-                    }
+
+        timeout = aiohttp.ClientTimeout(
+        connect=self.traffic_connect_timeout,
+        total=self.traffic_total_timeout,
+        )
+
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, params=params) as response:
+                    data = await response.json()
+
+                    if data.get('routes'):
+                        route = data['routes'][0]['legs'][0]
+                        duration = route.get(
+                            'duration_in_traffic', {}
+                        ).get('value', 0)
+                        normal_duration = route.get(
+                            'duration', {}
+                        ).get('value', 1)
+
+                        return {
+                            'duration': duration,
+                            'speed': (
+                                route.get('distance', {}).get('value', 0) / duration
+                                if duration > 0
+                                else 50
+                            ),
+                            'congestion': (
+                                duration / normal_duration - 1.0
+                                if normal_duration > 0
+                                else 0
+                            )
+                        }
+        except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError):
+            pass
+
         return {}
     
     async def _fetch_osrm_data(self, source: Dict, dest: Dict):
-        """Fetch routing data from OSRM"""
-        url = f"{self.osrm_url}/route/v1/driving/{source['lng']},{source['lat']};{dest['lng']},{dest['lat']}"
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                data = await response.json()
-                if data.get('routes'):
-                    route = data['routes'][0]
-                    return {
-                        'duration': route['duration'],
-                        'distance': route['distance'],
-                        'speed': route['distance'] / route['duration'] if route['duration'] > 0 else 50,
-                        'free_flow_speed': route['distance'] / (route['duration'] * 0.8) if route['duration'] > 0 else 80
-                    }
+        """Fetch routing data from OSRM with timeout, retries and circuit breaker."""
+        if self._osrm_circuit_open:
+            return {'speed': 50, 'free_flow_speed': 80}
+
+        url = (
+            f"{self.osrm_url}/route/v1/driving/"
+            f"{source['lng']},{source['lat']};"
+            f"{dest['lng']},{dest['lat']}"
+        )
+
+        timeout = aiohttp.ClientTimeout(
+        connect=self.traffic_connect_timeout,
+        total=self.traffic_total_timeout,
+        )
+        max_attempts = 3
+
+        for attempt in range(max_attempts):
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(url) as response:
+                        data = await response.json()
+
+                        if data.get('routes'):
+                            route = data['routes'][0]
+
+                            # Successful request resets the circuit-breaker state.
+                            self._osrm_failure_count = 0
+
+                            return {
+                                'duration': route['duration'],
+                                'distance': route['distance'],
+                                'speed': (
+                                    route['distance'] / route['duration']
+                                    if route['duration'] > 0
+                                    else 50
+                                ),
+                                'free_flow_speed': (
+                                    route['distance'] / (route['duration'] * 0.8)
+                                    if route['duration'] > 0
+                                    else 80
+                                )
+                            }
+
+            except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError):
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    self._osrm_failure_count += 1
+
+                    if self._osrm_failure_count >= 5:
+                        self._osrm_circuit_open = True
+
         return {'speed': 50, 'free_flow_speed': 80}
     
     async def get_real_time_traffic(self, route_id: str):
@@ -257,7 +328,16 @@ class TrafficPipeline:
                 logger.error(f"Prediction failed: expected 5 features, got {route_data.shape[1]}")
                 return None
 
-            window = self._route_windows[route_id or ""]
+            route_key = route_id or ""
+            window = self._route_windows.get(route_key)
+            if window is None:
+                if len(self._route_windows) >= self._max_route_windows:
+                    self._route_windows.popitem(last=False)
+                window = deque(maxlen=60)
+                self._route_windows[route_key] = window
+            else:
+                self._route_windows.move_to_end(route_key)
+
             window.append(route_data[0])
 
             seq = list(window)
@@ -422,7 +502,7 @@ class TrafficPipeline:
         if traffic:
             return traffic.get('congestion', 0)
         return 0
-    
+
     async def get_traffic_forecast(self, route_id: str, hours: int = 1):
         """Get traffic forecast for next N hours"""
         # Get historical data for this route

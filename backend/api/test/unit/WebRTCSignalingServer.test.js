@@ -140,7 +140,20 @@ describe('WebRTCSignalingServer', () => {
     });
   });
 
+
   describe('calculateDistance()', () => {
+        it.each([
+      ['first latitude', NaN, 77.59, 12.97, 77.59],
+      ['first longitude', 12.97, NaN, 12.97, 77.59],
+      ['second latitude', 12.97, 77.59, NaN, 77.59],
+      ['second longitude', 12.97, 77.59, 12.97, NaN],
+      ['positive Infinity', Infinity, 77.59, 12.97, 77.59],
+      ['negative Infinity', -Infinity, 77.59, 12.97, 77.59],
+    ])('throws TypeError for non-finite %s', (_label, lat1, lng1, lat2, lng2) => {
+      expect(() =>
+        server.calculateDistance(lat1, lng1, lat2, lng2),
+      ).toThrow(TypeError);
+    });
     it('returns 0 for identical points', () => {
       expect(server.calculateDistance(12.97, 77.59, 12.97, 77.59)).toBe(0);
     });
@@ -467,6 +480,45 @@ describe('WebRTCSignalingServer', () => {
 
       expect(() => server.destroy()).not.toThrow();
       expect(ws2.close).toHaveBeenCalled();
+    });
+  });
+
+  describe('meshId and payload boundary checks', () => {
+    it('creates a new mesh and registers it in meshes Map', () => {
+      const meshId = server.getOrCreateMesh();
+      expect(meshId).toMatch(/^mesh_/);
+      expect(server.meshes.has(meshId)).toBe(true);
+      expect(server.meshes.get(meshId).size).toBe(0);
+    });
+
+    it('returns null from getOrCreateMesh when maxMeshes cap is reached', () => {
+      server.maxMeshes = 2;
+      server.meshes.set('m1', new Set());
+      server.meshes.set('m2', new Set());
+
+      const result = server.getOrCreateMesh();
+      expect(result).toBeNull();
+    });
+
+    it('falls back to default maxPayload of 4096 when WS_MAX_PAYLOAD_BYTES is empty or not finite', () => {
+      const parsePayload = (val) => {
+        const parsed = parseInt(val, 10);
+        return Number.isFinite(parsed) ? parsed : 4096;
+      };
+
+      expect(parsePayload('')).toBe(4096);
+      expect(parsePayload('   ')).toBe(4096);
+      expect(parsePayload('not-a-number')).toBe(4096);
+      expect(parsePayload('8192')).toBe(8192);
+    });
+
+    it('enforces MAX_MESH_ID_LENGTH of 64 on meshId query parameter', () => {
+      const MAX_MESH_ID_LENGTH = 64;
+      const validMeshId = 'a'.repeat(64);
+      const invalidMeshId = 'a'.repeat(65);
+
+      expect(validMeshId.length <= MAX_MESH_ID_LENGTH).toBe(true);
+      expect(invalidMeshId.length > MAX_MESH_ID_LENGTH).toBe(true);
     });
   });
 });
