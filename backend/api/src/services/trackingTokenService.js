@@ -3,7 +3,7 @@ import logger from '../middleware/logger.js';
 
 const TOKEN_BYTE_LENGTH = 32;
 const TOKEN_EXPIRY_DAYS = 7;
-const DRIVER_LOCATION_FRESHNESS_MS = 15 * 60 * 1000;
+const PUBLIC_TRACKING_LOCATION_FRESHNESS_SECONDS = parseInt(process.env.PUBLIC_TRACKING_LOCATION_FRESHNESS_SECONDS || '900', 10);
 
 // Helper to validate standard UUID format
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -302,7 +302,7 @@ export class TrackingTokenService {
       return null;
     }
 
-    const freshnessCutoff = new Date(Date.now() - DRIVER_LOCATION_FRESHNESS_MS).toISOString();
+    const freshnessCutoff = new Date(Date.now() - PUBLIC_TRACKING_LOCATION_FRESHNESS_SECONDS * 1000).toISOString();
     const { data: location, error: locationError } = await this._supabaseAdmin
       .from('driver_locations')
       .select('latitude, longitude, last_updated_at')
@@ -325,70 +325,8 @@ export class TrackingTokenService {
   }
 }
 
-const crypto = require('crypto');
-const { createClient } = require('@supabase/supabase-js');
-const locationService = require('./locationService');
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-const generateTrackingToken = (bookingId, driverId) => {
-  const payload = `${bookingId}:${driverId}:${Date.now()}`;
-  return crypto.createHash('sha256').update(payload).digest('hex');
-};
-
-const issueTrackingToken = async (bookingId, driverId) => {
-  const token = generateTrackingToken(bookingId, driverId);
-
-  const { data, error } = await supabase
-    .from('tracking_tokens')
-    .insert({
-      token: token,
-      booking_id: bookingId,
-      driver_id: driverId,
-      created_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    })
-    .select()
-    .single();
-
-  if (error) throw new Error('Failed to issue tracking token');
-  return data;
-};
-
-const validateTrackingToken = async (token) => {
-  const { data, error } = await supabase
-    .from('tracking_tokens')
-    .select('*')
-    .eq('token', token)
-    .single();
-
-  if (error || !data) {
-    return { valid: false, message: 'Invalid tracking token' };
-  }
-
-  if (new Date(data.expires_at) < new Date()) {
-    return { valid: false, message: 'Tracking token expired' };
-  }
-
-  return { valid: true, data };
-};
-
-const updateLocationWithToken = async (token, longitude, latitude) => {
-  const validation = await validateTrackingToken(token);
-  if (!validation.valid) {
-    throw new Error(validation.message);
-  }
-
-  const { driver_id } = validation.data;
-  await locationService.updateDriverLocation(driver_id, longitude, latitude);
-
-  return { success: true, message: 'Location updated' };
-};
-
-module.exports = {
-  issueTrackingToken,
-  validateTrackingToken,
-  updateLocationWithToken,
-};
+// Legacy CommonJS block removed — it used `require()` which is invalid
+// in this ES module context (package.json has "type": "module") and
+// caused a ReferenceError at module load time. The functions
+// (issueTrackingToken, validateTrackingToken, updateLocationWithToken)
+// were unreferenced outside this file.
