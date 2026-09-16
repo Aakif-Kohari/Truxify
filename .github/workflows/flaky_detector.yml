@@ -2,7 +2,7 @@ name: Automated Flaky Test Detector & Bisect Runner
 
 on:
   pull_request:
-    branches: [ main, peer ]
+    branches: [main, peer]
 
 jobs:
   detect-flaky-tests:
@@ -16,7 +16,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-size: 18
+          node-version: 18
 
       - name: Install dependencies
         run: |
