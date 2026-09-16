@@ -91,6 +91,7 @@ vi.mock('../repositories/deadLetter.repository.js', () => ({
 
 import orderConsumer from '../consumers/order.consumer.js';
 import orderReadModel from '../cqrs/order.read.model.js';
+import logger from '../../api/src/middleware/logger.js';
 
 function orderEventMessage({ eventId = 'evt-1234', orderId = ORDER_ID } = {}) {
   return {
@@ -390,7 +391,7 @@ describe('OrderConsumer replayDeadLetters idempotency (Issue #11218)', () => {
     expect(res.failed).toBe(1);
   });
 
-  it('skips handler and marks replayed for an already-applied read-model event', async () => {
+  it('executes registered handlers and marks replayed when read-model event was already applied', async () => {
     listPendingMock.mockResolvedValueOnce([
       {
         id: 'dlq-6',
@@ -401,16 +402,114 @@ describe('OrderConsumer replayDeadLetters idempotency (Issue #11218)', () => {
     ]);
     applyEventMock.mockResolvedValueOnce(false);
 
-    const handler = vi.fn();
+    const handler = vi.fn().mockResolvedValue();
     orderConsumer.registerHandler('order.created', handler);
 
     const res = await orderConsumer.replayDeadLetters();
 
     expect(applyEventMock).toHaveBeenCalledTimes(1);
-    expect(handler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledTimes(1);
     expect(markStatusMock).toHaveBeenCalledWith('dlq-6', 'replayed');
     expect(res.succeeded).toBe(1);
     expect(res.failed).toBe(0);
+  });
+
+  it('preserves retry and does not mark replayed when handler fails after read-model projection was already applied', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-6b',
+        topic: 'order.created',
+        message: JSON.stringify(orderEventMessage({ eventId: 'evt-dlq-6b' })),
+        retry_count: 0,
+      },
+    ]);
+    applyEventMock.mockResolvedValueOnce(false);
+
+    const handler = vi.fn().mockRejectedValue(new Error('handler downstream failure'));
+    orderConsumer.registerHandler('order.created', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(applyEventMock).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(markStatusMock).not.toHaveBeenCalledWith('dlq-6b', 'replayed');
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-6b', 'pending', { incrementRetry: true });
+    expect(res.succeeded).toBe(0);
+    expect(res.failed).toBe(1);
+  });
+
+  it('continues batch without rejection and logs error when markCompleted throws during replay', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-mc-1',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-mc-1' }, orderId: ORDER_ID }),
+        retry_count: 0,
+      },
+      {
+        id: 'dlq-mc-2',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-mc-2' }, orderId: ORDER_ID }),
+        retry_count: 0,
+      },
+    ]);
+    claimProcessingMock.mockResolvedValue(true);
+    markCompletedMock
+      .mockRejectedValueOnce(new Error('DB failure on markCompleted'))
+      .mockResolvedValueOnce();
+
+    const handler = vi.fn().mockResolvedValue();
+    orderConsumer.registerHandler('payment.confirmed', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to resolve processing claim during replay for event evt-mc-1'),
+      expect.any(Error)
+    );
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-mc-1', 'replayed');
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-mc-2', 'replayed');
+    expect(res.succeeded).toBe(2);
+    expect(res.failed).toBe(0);
+  });
+
+  it('continues batch without rejection and logs error when markFailed throws during handler failure', async () => {
+    listPendingMock.mockResolvedValueOnce([
+      {
+        id: 'dlq-mf-1',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-mf-1' }, orderId: ORDER_ID }),
+        retry_count: 0,
+      },
+      {
+        id: 'dlq-mf-2',
+        topic: 'payment.confirmed',
+        message: JSON.stringify({ metadata: { eventId: 'evt-mf-2' }, orderId: ORDER_ID }),
+        retry_count: 0,
+      },
+    ]);
+    claimProcessingMock.mockResolvedValue(true);
+    markFailedMock
+      .mockRejectedValueOnce(new Error('DB failure on markFailed'))
+      .mockResolvedValueOnce();
+
+    const handler = vi.fn()
+      .mockRejectedValueOnce(new Error('handler error on entry 1'))
+      .mockResolvedValueOnce();
+    orderConsumer.registerHandler('payment.confirmed', handler);
+
+    const res = await orderConsumer.replayDeadLetters();
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to resolve processing claim during replay for event evt-mf-1'),
+      expect.any(Error)
+    );
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-mf-1', 'pending', { incrementRetry: true });
+    expect(markStatusMock).toHaveBeenCalledWith('dlq-mf-2', 'replayed');
+    expect(res.failed).toBe(1);
+    expect(res.succeeded).toBe(1);
   });
 
   it('handles invalid JSON in DLQ entry gracefully', async () => {

@@ -281,8 +281,9 @@ class OrderConsumer {
       }
 
       // Order read-model topics: apply the event atomically via orderReadModel.
-      // If the event was already applied (duplicate/replayed), applyEvent returns false
-      // and we skip handlers, marking the dead letter replayed.
+      // If the event was already applied, applyEvent returns false and we skip only
+      // the projection. In either case we proceed to run registered handlers so failed
+      // handlers can be recovered upon replay.
       if (ORDER_READ_MODEL_TOPICS.has(currentTopic)) {
         const eventId = parsedMessage?.eventId || parsedMessage?.metadata?.eventId || null;
         const orderId = parsedMessage?.aggregateId || parsedMessage?.orderId || parsedMessage?.payload?.orderId || null;
@@ -310,13 +311,10 @@ class OrderConsumer {
         }
 
         if (!applied) {
-          logger.info(`[OrderConsumer] Skipping replay for already-applied read-model event ${eventId} on ${currentTopic}`);
-          await deadLetterRepository.markStatus(entry.id, 'replayed');
-          results.succeeded += 1;
-          continue;
+          logger.info(`[OrderConsumer] Read-model projection already applied for event ${eventId} on ${currentTopic}; continuing to registered handlers`);
         }
 
-        // Applied successfully: run registered handlers
+        // Run registered handlers
         try {
           for (const handler of topicHandlers) {
             await handler(parsedMessage, { value: parsedMessage });
@@ -327,6 +325,7 @@ class OrderConsumer {
           logger.error(`Replay failed for dead letter ${entry.id} (${currentTopic}):`, error);
           if ((entry.retry_count ?? 0) >= MAX_REPLAY_ATTEMPTS) {
             await deadLetterRepository.markStatus(entry.id, 'failed');
+            logger.error(`Dead letter ${entry.id} (${currentTopic}) marked failed after ${entry.retry_count ?? 0} retries`);
           } else {
             await deadLetterRepository.markStatus(entry.id, 'pending', { incrementRetry: true });
           }
@@ -408,13 +407,17 @@ class OrderConsumer {
         results.failed += 1;
       } finally {
         if (claimedEventId) {
-          if (handlerFailed) {
-            await processedEventRepository.markFailed(currentTopic, claimedEventId, groupId);
-          } else {
-            const completed = await processedEventRepository.markCompleted(currentTopic, claimedEventId, groupId);
-            if (completed === false) {
-              logger.warn(`[OrderConsumer] Claim for event ${claimedEventId} on ${currentTopic} was superseded or expired before replay completion`);
+          try {
+            if (handlerFailed) {
+              await processedEventRepository.markFailed(currentTopic, claimedEventId, groupId);
+            } else {
+              const completed = await processedEventRepository.markCompleted(currentTopic, claimedEventId, groupId);
+              if (completed === false) {
+                logger.warn(`[OrderConsumer] Claim for event ${claimedEventId} on ${currentTopic} was superseded or expired before replay completion`);
+              }
             }
+          } catch (error) {
+            logger.error(`Failed to resolve processing claim during replay for event ${claimedEventId} on ${currentTopic}:`, error);
           }
         }
       }
