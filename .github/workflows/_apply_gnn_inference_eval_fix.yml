@@ -1,0 +1,60 @@
+name: Apply GNN inference eval fix
+
+on:
+  push:
+    branches:
+      - fix/gnn-inference-eval-mode
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch source and add regression test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("backend/ml/gnn/models.py")
+          text = source.read_text(encoding="utf-8")
+          old = '''            # Get node embeddings
+            with torch.no_grad():
+                embeddings = self.model(data.x, data.edge_index, data.edge_attr)
+'''
+          new = '''            # Get node embeddings
+            was_training = self.model.training
+            self.model.eval()
+            try:
+                with torch.no_grad():
+                    embeddings = self.model(data.x, data.edge_index, data.edge_attr)
+            finally:
+                self.model.train(was_training)
+'''
+          if old not in text:
+              raise SystemExit("Expected inference block was not found")
+          source.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          test = Path("backend/ml/tests/test_gnn_inference_eval.py")
+          test.write_text('''import numpy as np\nimport pytest\n\ntorch_geometric = pytest.importorskip("torch_geometric")\nfrom gnn.models import GraphNetworkBuilder, RouteOptimizer\n\n\ndef test_route_inference_uses_eval_mode_without_mutating_batchnorm_state():\n    builder = GraphNetworkBuilder()\n    builder.build_road_network(\n        [\n            {"id": "A", "lat": 12.97, "lng": 77.59},\n            {"id": "B", "lat": 12.98, "lng": 77.60},\n        ],\n        [\n            {"source": "A", "target": "B", "distance": 10.0, "time": 10.0},\n        ],\n    )\n    graph_data = builder.get_pytorch_data()\n\n    optimizer = RouteOptimizer()\n    optimizer.model.train()\n    captured_embeddings = []\n\n    def capture_embeddings(start, end, embeddings, graph_data, objectives, constraints):\n        captured_embeddings.append(np.array(embeddings, copy=True))\n        return [{\n            "from": "A",\n            "to": "B",\n            "distance": 10.0,\n            "time": 10.0,\n            "cost": 0,\n            "fuel": 0,\n            "congestion": 0,\n        }]\n\n    optimizer._find_optimal_route = capture_embeddings\n    running_mean = optimizer.model.bn1.running_mean.detach().clone()\n    running_var = optimizer.model.bn1.running_var.detach().clone()\n\n    first = optimizer.optimize_route("A", "B", graph_data, objectives=["time"])\n    second = optimizer.optimize_route("A", "B", graph_data, objectives=["time"])\n\n    assert first["success"] is True\n    assert second["success"] is True\n    assert len(captured_embeddings) == 2\n    assert np.array_equal(captured_embeddings[0], captured_embeddings[1])\n    assert optimizer.model.training is True\n    assert optimizer.model.bn1.running_mean.equal(running_mean)\n    assert optimizer.model.bn1.running_var.equal(running_var)\n''', encoding="utf-8")
+          PY
+
+      - name: Validate patch
+        run: |
+          python -m compileall -q backend/ml/gnn/models.py backend/ml/tests/test_gnn_inference_eval.py
+
+      - name: Commit and self-clean
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/ml/gnn/models.py backend/ml/tests/test_gnn_inference_eval.py .github/workflows/_apply_gnn_inference_eval_fix.yml
+          git rm .github/workflows/_apply_gnn_inference_eval_fix.yml
+          git commit -m "fix(gnn): use eval mode during route inference"
+          git push origin HEAD:${GITHUB_REF_NAME}
