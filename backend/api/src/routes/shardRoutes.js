@@ -89,7 +89,7 @@ router.get('/shards/all/orders', authenticate, userLimiter, requirePolicy('shard
     const results = await req.executeCrossShard(
       'SELECT COUNT(*) as total FROM orders'
     );
-    const total = results.reduce((sum, r) => sum + parseInt(r.data[0]?.total || 0), 0);
+    const total = results.reduce((sum, r) => sum + parseInt(r.data[0]?.total || 0, 10), 0);
     res.json({
       success: true,
       data: {
