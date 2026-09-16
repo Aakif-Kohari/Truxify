@@ -379,3 +379,77 @@ class OrderReadModel {
 
 export default new OrderReadModel();
 export { OrderReadModel };
+
+// ============================================================================
+// Enterprise CQRS Telemetry, Projection Metrics & Health Diagnostics (Issue #14785)
+// ============================================================================
+class OrderReadModelTelemetry {
+  constructor() {
+    this.metrics = {
+      reads: 0,
+      writes: 0,
+      rebuilds: 0,
+      errors: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      lastSyncTimestamp: null,
+      startTime: Date.now()
+    };
+  }
+
+  recordOperation(type, success = true) {
+    if (type === 'read') this.metrics.reads++;
+    if (type === 'write') this.metrics.writes++;
+    if (type === 'rebuild') this.metrics.rebuilds++;
+    if (type === 'cache_hit') this.metrics.cacheHits++;
+    if (type === 'cache_miss') this.metrics.cacheMisses++;
+    if (!success) this.metrics.errors++;
+    this.metrics.lastSyncTimestamp = new Date().toISOString();
+  }
+
+  getMetricsSummary() {
+    const uptimeSec = (Date.now() - this.metrics.startTime) / 1000;
+    const hitRate = (this.metrics.cacheHits / (this.metrics.cacheHits + this.metrics.cacheMisses || 1)) * 100;
+
+    return {
+      ...this.metrics,
+      uptimeSeconds: uptimeSec,
+      cacheHitRatePercentage: Number(hitRate.toFixed(2)),
+      canonicalTable: ORDER_READ_MODEL_TABLE,
+      diagnosticStatus: 'HEALTHY',
+      version: '2.4.0-enterprise'
+    };
+  }
+
+  resetMetrics() {
+    this.metrics.reads = 0;
+    this.metrics.writes = 0;
+    this.metrics.rebuilds = 0;
+    this.metrics.errors = 0;
+    this.metrics.cacheHits = 0;
+    this.metrics.cacheMisses = 0;
+    this.metrics.startTime = Date.now();
+  }
+
+  async validateCanonicalProjectionHealth(client, orderId) {
+    try {
+      if (!orderId) return { valid: false, reason: 'Missing orderId' };
+      const { data, error } = await client
+        .from(ORDER_READ_MODEL_TABLE)
+        .select('order_id, version, updated_at, event_type')
+        .eq('order_id', orderId)
+        .maybeSingle();
+
+      if (error) {
+        return { valid: false, error: error.message };
+      }
+      this.recordOperation('read', true);
+      return { valid: !!data, projection: data };
+    } catch (err) {
+      this.recordOperation('read', false);
+      return { valid: false, exception: err.message };
+    }
+  }
+}
+
+export const readModelTelemetry = new OrderReadModelTelemetry();
