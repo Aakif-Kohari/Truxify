@@ -40,6 +40,61 @@ def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
+def _route_distance(current_location: tuple[float, float], route: List[tuple[float, float]]) -> float:
+    """Return the total distance from the current location through the route."""
+    total_distance = 0.0
+    previous = current_location
+
+    for waypoint in route:
+        total_distance += _haversine(*previous, *waypoint)
+        previous = waypoint
+
+    return total_distance
+
+
+def _best_detour_distance(
+    current_location: tuple[float, float],
+    remaining_route: List[tuple[float, float]],
+    pickup_location: tuple[float, float],
+    dropoff_location: tuple[float, float],
+) -> float:
+    """Return the minimum route increase for a valid pickup/dropoff insertion."""
+    baseline_distance = _route_distance(current_location, remaining_route)
+    best_distance = float("inf")
+    route_length = len(remaining_route)
+
+    for pickup_index in range(route_length + 1):
+        pickup_before = current_location if pickup_index == 0 else remaining_route[pickup_index - 1]
+        pickup_after = remaining_route[pickup_index] if pickup_index < route_length else None
+        pickup_delta = _haversine(*pickup_before, *pickup_location)
+        if pickup_after is not None:
+            pickup_delta += _haversine(*pickup_location, *pickup_after)
+            pickup_delta -= _haversine(*pickup_before, *pickup_after)
+
+        augmented_route = (
+            remaining_route[:pickup_index]
+            + [pickup_location]
+            + remaining_route[pickup_index:]
+        )
+
+        for dropoff_index in range(pickup_index + 1, len(augmented_route) + 1):
+            dropoff_before = augmented_route[dropoff_index - 1]
+            dropoff_after = (
+                augmented_route[dropoff_index]
+                if dropoff_index < len(augmented_route)
+                else None
+            )
+            dropoff_delta = _haversine(*dropoff_before, *dropoff_location)
+            if dropoff_after is not None:
+                dropoff_delta += _haversine(*dropoff_location, *dropoff_after)
+                dropoff_delta -= _haversine(*dropoff_before, *dropoff_after)
+
+            candidate_distance = baseline_distance + pickup_delta + dropoff_delta
+            best_distance = min(best_distance, candidate_distance)
+
+    return max(best_distance - baseline_distance, 0.0)
+
+
 def find_mid_trip_loads(
     current_location: Dict,
     remaining_route: List[Dict],
@@ -50,8 +105,8 @@ def find_mid_trip_loads(
 
     For each nearby load the algorithm:
       1. Filters by remaining truck capacity (weight and dimensions).
-      2. Calculates detour: dist(current→pickup) + dist(pickup→dropoff) +
-         dist(dropoff→next_waypoint) − dist(current→next_waypoint).
+      2. Finds the minimum extra distance required to insert pickup and dropoff
+         into the complete remaining route while preserving pickup-before-dropoff.
       3. Scores by earnings/detour ratio, proximity, and deadline feasibility.
       4. Returns the top 5 recommendations sorted by priority_score.
 
@@ -80,18 +135,10 @@ def find_mid_trip_loads(
     cap_width = available_capacity.get("width_m", 0.0)
     cap_height = available_capacity.get("height_m", 0.0)
 
-    # Next waypoint for detour calculation
-    if remaining_route:
-        next_wp = remaining_route[0]
-        next_lat = next_wp.get("lat", cur_lat)
-        next_lng = next_wp.get("lng", cur_lng)
-    else:
-        # No remaining route – treat current location as next waypoint
-        next_lat = cur_lat
-        next_lng = cur_lng
-
-    # Baseline distance: current -> next waypoint (without detour)
-    baseline_dist = _haversine(cur_lat, cur_lng, next_lat, next_lng)
+    remaining_route_points = [
+        (waypoint.get("lat", cur_lat), waypoint.get("lng", cur_lng))
+        for waypoint in remaining_route
+    ]
 
     now = datetime.now(timezone.utc)
     recommendations = []
@@ -112,18 +159,17 @@ def find_mid_trip_loads(
             pickup_lng = load.get("pickup_lng", 0.0)
             dropoff_lat = load.get("dropoff_lat", 0.0)
             dropoff_lng = load.get("dropoff_lng", 0.0)
+            pickup_location = (pickup_lat, pickup_lng)
+            dropoff_location = (dropoff_lat, dropoff_lng)
 
             # --- 2. Detour calculation ---
             dist_cur_pickup = _haversine(cur_lat, cur_lng, pickup_lat, pickup_lng)
-            dist_pickup_dropoff = _haversine(pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
-            dist_dropoff_next = _haversine(dropoff_lat, dropoff_lng, next_lat, next_lng)
-
-            detour_km = (
-                dist_cur_pickup + dist_pickup_dropoff + dist_dropoff_next
-                - baseline_dist
+            detour_km = _best_detour_distance(
+                (cur_lat, cur_lng),
+                remaining_route_points,
+                pickup_location,
+                dropoff_location,
             )
-            detour_km = max(detour_km, 0.0)  # Floor at zero
-
             detour_minutes = (detour_km / _AVG_SPEED_KMH) * 60.0 if _AVG_SPEED_KMH > 0 else 0.0
 
             # --- 3. Deadline feasibility ---
