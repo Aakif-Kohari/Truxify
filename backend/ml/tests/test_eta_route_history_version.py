@@ -3,19 +3,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-mock_tf = MagicMock()
-mock_tf.keras = MagicMock()
-mock_tf.keras.models = MagicMock()
-mock_tf.keras.layers = MagicMock()
-mock_tf.keras.optimizers = MagicMock()
-mock_tf.keras.models.load_model = MagicMock()
-mock_tf.keras.optimizers.Adam = MagicMock()
+from services import traffic_pipeline
 
-sys.modules["tensorflow"] = mock_tf
-sys.modules["tensorflow.keras"] = mock_tf.keras
-sys.modules["tensorflow.keras.models"] = mock_tf.keras.models
-sys.modules["tensorflow.keras.layers"] = mock_tf.keras.layers
-sys.modules["tensorflow.keras.optimizers"] = mock_tf.keras.optimizers
+traffic_pipeline.TrafficPipeline._load_or_create_model = lambda self: MagicMock()
 
 from routes import eta_routes
 
