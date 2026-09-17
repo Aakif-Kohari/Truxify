@@ -30,6 +30,14 @@ Opens or closes the escrow circuit breaker (`{"paused": true|false}`). While ope
 
 ---
 
+## Escrow pause state (emergency control)
+
+- The Redis-backed escrow pause flag is an **emergency control**: while set, it refuses all on-chain escrow submissions.
+- **Fail-closed:** if Redis cannot be read (unreachable, missing client, or read error), the pause state is considered **active/paused** — `isEscrowPaused()` reports paused and escrow submissions are refused while the state is unreadable.
+- **Operator action:** restore/verify Redis and the pause state before normal escrow operation resumes. Confirm Redis is reachable, check `GET /api/internal/escrow-velocity` (`escrowPaused` field), then close the circuit explicitly with `POST /api/internal/pause-escrow {"paused": false}` once the incident is resolved.
+
+---
+
 ## Security
 
 Both endpoints are gated by `requireApiKey` (`x-api-key` header or `api_key` query against `VALID_API_KEYS`), so only authenticated B2B callers can reach them. Responses never expose internal infrastructure details.
