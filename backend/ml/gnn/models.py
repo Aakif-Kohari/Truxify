@@ -167,10 +167,19 @@ class GraphNetworkBuilder:
 
         self.node_map = node_map
 
+        if edge_indices:
+            edge_index = torch.tensor(
+                edge_indices, dtype=torch.long
+            ).t().contiguous()
+            edge_attr = torch.tensor(edge_features, dtype=torch.float)
+        else:
+            edge_index = torch.empty((2, 0), dtype=torch.long)
+            edge_attr = torch.empty((0, GNN_EDGE_FEATURE_DIM), dtype=torch.float)
+
         return {
             'node_features': torch.tensor(node_features, dtype=torch.float),
-            'edge_indices': torch.tensor(edge_indices, dtype=torch.long).t().contiguous(),
-            'edge_features': torch.tensor(edge_features, dtype=torch.float)
+            'edge_indices': edge_index,
+            'edge_features': edge_attr
         }
     
     def _road_type_encoding(self, road_type):
