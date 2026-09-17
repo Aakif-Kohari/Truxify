@@ -70,6 +70,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.22.0'
           channel: stable
           cache: true
 
@@ -111,6 +112,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.22.0'
           channel: stable
           cache: true
 
@@ -162,7 +164,6 @@ jobs:
 
       - name: Run eBPF tests
         run: python -m pytest ebpf/tests -v
-
 
   contracts:
     name: Smart contract checks
