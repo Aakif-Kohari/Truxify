@@ -58,7 +58,7 @@
  */
 
 import express from 'express';
-import { supabase, supabaseAdmin, mongoDb, redisClient, firebaseAdmin } from '../config/db.js';
+import { getAdminClient, mongoDb, redisClient, firebaseAdmin } from '../config/db.js';
 import { healthLimiter } from '../middleware/rateLimiter.js';
 import { checkEscrowHealth } from '../services/escrow.js';
 import logger from '../middleware/logger.js';
@@ -86,7 +86,7 @@ async function checkSupabase() {
   // Probe through the service-role client: anon privileges on profiles are
   // revoked by revoke_anon_privileges.sql, so an anon-keyed probe would always
   // report 42501 permission denied even when Supabase is reachable.
-  const client = supabaseAdmin || supabase;
+  const client = getAdminClient();
   if (!client) return 'not_configured';
   try {
     const { error } = await withTimeout(
