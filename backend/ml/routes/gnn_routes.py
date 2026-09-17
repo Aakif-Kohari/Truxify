@@ -56,6 +56,45 @@ class TrainRequest(BaseModel):
     epochs: int = 100
     learning_rate: float = 0.001
 
+
+def _multi_objective_optimization(start, end, graph_data, objectives=None, constraints=None):
+    """Select a representative route from the optimizer's Pareto frontier."""
+    requested_objectives = list(objectives) if objectives else ["time", "cost", "fuel"]
+    allowed_objectives = {"time", "cost", "fuel", "distance", "congestion"}
+    invalid_objectives = [objective for objective in requested_objectives if objective not in allowed_objectives]
+    if invalid_objectives:
+        raise ValueError(f"Unsupported objectives: {', '.join(invalid_objectives)}")
+
+    frontier = optimizer._find_pareto_routes(
+        start,
+        end,
+        graph_data,
+        requested_objectives,
+        constraints,
+    )
+    if not frontier:
+        return None
+
+    weights = {
+        "time": 0.5,
+        "cost": 0.3,
+        "fuel": 0.2,
+        "distance": 0.2,
+        "congestion": 2.0,
+    }
+    best_route = min(
+        frontier,
+        key=lambda candidate: sum(
+            weights.get(objective, 1.0) * candidate.get(f"total_{objective}", 0)
+            for objective in requested_objectives
+        ),
+    )
+
+    result = dict(best_route)
+    result["pareto_routes"] = frontier
+    result["pareto_count"] = len(frontier)
+    return result
+
 @router.post("/build-graph")
 async def build_graph(nodes: List[Node], edges: List[Edge]):
     """Build road network graph"""
@@ -128,11 +167,12 @@ async def multi_objective_optimize(request: RouteRequest):
         
         graph_data = builder.get_pytorch_data()
         
-        result = optimizer.multi_objective_optimization(
+        result = _multi_objective_optimization(
             request.start_node,
             request.end_node,
             graph_data,
-            request.constraints
+            objectives=request.objectives,
+            constraints=request.constraints
         )
         
         if result:
