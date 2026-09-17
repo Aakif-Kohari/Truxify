@@ -29,6 +29,29 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 export let supabase = null;
 export let supabaseAdmin = null;
 
+/**
+ * Returns the service-role Supabase client when configured, falling back to
+ * the public (anon-key) client otherwise. Use for server-side operations that
+ * must bypass Row Level Security — plain service calls should prefer the anon
+ * client so RLS stays enforced.
+ *
+ * Replaces the bare `supabaseAdmin || supabase` idiom that was duplicated
+ * across services and routes, so the admin/anon precedence and the
+ * RLS rationale live in one documented place.
+ */
+export function getAdminClient() {
+  return supabaseAdmin || supabase;
+}
+
+/**
+ * Returns the public (anon-key) Supabase client. Prefer this for any
+ * operation that must respect Row Level Security. Returns null when the
+ * service is not configured.
+ */
+export function getAnonClient() {
+  return supabase;
+}
+
 // Connection health helpers
 export function isConnected() {
   return supabase !== null;
