@@ -1,17 +1,55 @@
 import { redisClient } from '../config/db.js';
 import logger from '../middleware/logger.js';
+import crypto from 'crypto';
+
+const localQueues = new Map();
+
+function acquireLocalLock(key, ttlSeconds) {
+  const tail = localQueues.get(key) ?? Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const chain = tail.then(() => gate);
+  localQueues.set(key, chain);
+
+  let released = false;
+  const doRelease = () => {
+    if (released) return;
+    released = true;
+    release();
+    chain.then(() => {
+      if (localQueues.get(key) === chain) {
+        localQueues.delete(key);
+      }
+    });
+  };
+
+  const timer = setTimeout(doRelease, ttlSeconds * 1000);
+  timer.unref?.();
+
+  return tail.then(() => ({
+    acquired: true,
+    release: async () => {
+      clearTimeout(timer);
+      doRelease();
+    },
+  }));
+}
 
 /**
  * Acquires a distributed lock using Redis SET NX EX.
+ * Falls back to an in-process per-key mutex when Redis is unavailable.
  * 
  * @param {string} key - The unique lock identifier (e.g., lock:profile:uid).
  * @param {number} ttlSeconds - Time-to-live to prevent deadlocks if the process crashes.
  * @returns {Promise<{acquired: boolean, release: Function}>}
  */
 export async function acquireDistributedLock(key, ttlSeconds = 5) {
-  if (!redisClient || redisClient.status !== 'ready') {
-    // Fail open locally but log; caller should handle degraded mode
-    return { acquired: false, release: async () => {} };
+  const isRedisReady = redisClient &&
+    (redisClient.status === 'ready' || (!redisClient.status && typeof redisClient.set === 'function'));
+
+  if (!isRedisReady) {
+    // Degraded / fallback mode: maintain in-process mutual exclusion per key
+    return acquireLocalLock(key, ttlSeconds);
   }
 
   try {
@@ -29,7 +67,8 @@ export async function acquireDistributedLock(key, ttlSeconds = 5) {
       };
     }
   } catch (err) {
-    logger.error({ err, key }, 'Redis lock acquisition error');
+    logger.error({ err, key }, 'Redis lock acquisition error; using local mutex fallback');
+    return acquireLocalLock(key, ttlSeconds);
   }
 
   return { acquired: false, release: async () => {} };
