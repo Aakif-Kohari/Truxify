@@ -187,9 +187,9 @@ describe('services/ml.js Unit Tests', () => {
       expect(parseWeightKg('1.2 t')).toBe(1200);
     });
 
-    it('returns NaN for invalid weight strings', () => {
-      expect(Number.isNaN(parseWeightKg('heavy load'))).toBe(true);
-      expect(Number.isNaN(parseWeightKg(null))).toBe(true);
+    it('returns null for invalid weight strings', () => {
+      expect(parseWeightKg('heavy load')).toBeNull();
+      expect(parseWeightKg(null)).toBeNull();
     });
 
     it('parseWeightKgSafe returns parsed number or null on invalid', () => {
