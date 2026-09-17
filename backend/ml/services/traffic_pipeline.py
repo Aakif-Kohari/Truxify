@@ -382,15 +382,42 @@ class TrafficPipeline:
             logger.warning("Not enough per-route data for training")
             return
 
-        X = np.concatenate(X_parts, axis=0)
-        y = np.concatenate(y_parts, axis=0)
+        X_train_parts, y_train_parts = [], []
+        X_val_parts, y_val_parts = [], []
+        validation_fraction = 0.2
+
+        for X_route, y_route in zip(X_parts, y_parts):
+            if len(X_route) < 2:
+                continue
+
+            validation_count = max(1, int(np.ceil(len(X_route) * validation_fraction)))
+            split_index = len(X_route) - validation_count
+            if split_index < 1:
+                continue
+
+            X_train_parts.append(X_route[:split_index])
+            y_train_parts.append(y_route[:split_index])
+            X_val_parts.append(X_route[split_index:])
+            y_val_parts.append(y_route[split_index:])
+
+        if not X_train_parts or not X_val_parts:
+            logger.warning("Not enough per-route data for deterministic validation")
+            return
+
+        X_train = np.concatenate(X_train_parts, axis=0)
+        y_train = np.concatenate(y_train_parts, axis=0)
+        X_val = np.concatenate(X_val_parts, axis=0)
+        y_val = np.concatenate(y_val_parts, axis=0)
         
-        # Train
+        # Train with an explicit temporal holdout from every eligible route.
+        # This avoids Keras selecting the last 20% of the combined route array,
+        # which can make validation depend on route ordering rather than time.
         self.model.fit(
-            X, y,
+            X_train,
+            y_train,
             epochs=epochs,
             batch_size=batch_size,
-            validation_split=0.2,
+            validation_data=(X_val, y_val),
             verbose=1
         )
         
