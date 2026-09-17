@@ -199,8 +199,8 @@ class DriverItem(BaseModel):
     max_length_m: float = Field(..., gt=0)
     max_width_m: float = Field(..., gt=0)
     max_height_m: float = Field(..., gt=0)
-    preferred_dest_lat: float = Field(0.0, ge=-90, le=90)
-    preferred_dest_lng: float = Field(0.0, ge=-180, le=180)
+    preferred_dest_lat: Optional[float] = Field(None, ge=-90, le=90)
+    preferred_dest_lng: Optional[float] = Field(None, ge=-180, le=180)
     rating: float = Field(3.0, ge=1, le=5)
 
 
