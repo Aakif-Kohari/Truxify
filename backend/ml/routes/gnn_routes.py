@@ -26,8 +26,8 @@ def get_graph_builder() -> GraphNetworkBuilder:
 
 
 def get_route_optimizer() -> RouteOptimizer:
-    """Provide a RouteOptimizer instance."""
-    return optimizer
+    """Provide a fresh, request-scoped RouteOptimizer per request."""
+    return RouteOptimizer()
 
 
 def _resolve_builder(builder_arg=None) -> GraphNetworkBuilder:
@@ -262,13 +262,23 @@ async def multi_objective_optimize(
         except TypeError:
             graph_data = active_builder.get_pytorch_data()
 
-        result = _multi_objective_optimization(
-            request.start_node,
-            request.end_node,
-            graph_data,
-            objectives=request.objectives,
-            constraints=request.constraints,
-        )
+        try:
+            result = _multi_objective_optimization(
+                request.start_node,
+                request.end_node,
+                graph_data,
+                objectives=request.objectives,
+                constraints=request.constraints,
+                route_optimizer=active_optimizer,
+            )
+        except TypeError:
+            result = _multi_objective_optimization(
+                request.start_node,
+                request.end_node,
+                graph_data,
+                objectives=request.objectives,
+                constraints=request.constraints,
+            )
 
         if result:
             return {

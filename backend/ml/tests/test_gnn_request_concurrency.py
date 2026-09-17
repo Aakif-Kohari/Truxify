@@ -1,4 +1,6 @@
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 pytest.importorskip("torch_geometric")
@@ -15,87 +17,159 @@ from routes.gnn_routes import (
 
 
 def test_concurrent_disjoint_graphs():
-    """Test 1 — Concurrent disjoint graphs.
+    """Test 1 — Concurrent disjoint graphs with parallel overlapping execution.
 
     Run two graph-building and route-optimization operations concurrently
-    with asyncio.gather(). Verify that neither request's graph topology,
-    node map, or route result bleeds into the other.
+    in parallel threads with barrier synchronization to guarantee overlapping
+    execution. Verify that neither request's graph topology, node map, or route
+    result bleeds into the other.
     """
-    async def _run():
-        delhi_nodes = [
-            Node(id="DEL_1", lat=28.61, lng=77.20, traffic=10, road_type="highway", speed_limit=80),
-            Node(id="DEL_2", lat=28.62, lng=77.21, traffic=20, road_type="arterial", speed_limit=60),
-            Node(id="DEL_3", lat=28.63, lng=77.22, traffic=15, road_type="highway", speed_limit=80),
-        ]
-        delhi_edges = [
-            Edge(source="DEL_1", target="DEL_2", distance=5.0, time=6.0, cost=50.0, fuel=2.0),
-            Edge(source="DEL_2", target="DEL_3", distance=8.0, time=9.0, cost=80.0, fuel=3.0),
-        ]
+    delhi_nodes = [
+        Node(id="DEL_1", lat=28.61, lng=77.20, traffic=10, road_type="highway", speed_limit=80),
+        Node(id="DEL_2", lat=28.62, lng=77.21, traffic=20, road_type="arterial", speed_limit=60),
+        Node(id="DEL_3", lat=28.63, lng=77.22, traffic=15, road_type="highway", speed_limit=80),
+    ]
+    delhi_edges = [
+        Edge(source="DEL_1", target="DEL_2", distance=5.0, time=6.0, cost=50.0, fuel=2.0),
+        Edge(source="DEL_2", target="DEL_3", distance=8.0, time=9.0, cost=80.0, fuel=3.0),
+    ]
 
-        mumbai_nodes = [
-            Node(id="BOM_1", lat=19.07, lng=72.87, traffic=30, road_type="highway", speed_limit=70),
-            Node(id="BOM_2", lat=19.08, lng=72.88, traffic=25, road_type="arterial", speed_limit=50),
-            Node(id="BOM_3", lat=19.09, lng=72.89, traffic=20, road_type="highway", speed_limit=70),
-        ]
-        mumbai_edges = [
-            Edge(source="BOM_1", target="BOM_2", distance=6.0, time=8.0, cost=60.0, fuel=2.5),
-            Edge(source="BOM_2", target="BOM_3", distance=7.0, time=9.0, cost=70.0, fuel=2.8),
-        ]
+    mumbai_nodes = [
+        Node(id="BOM_1", lat=19.07, lng=72.87, traffic=30, road_type="highway", speed_limit=70),
+        Node(id="BOM_2", lat=19.08, lng=72.88, traffic=25, road_type="arterial", speed_limit=50),
+        Node(id="BOM_3", lat=19.09, lng=72.89, traffic=20, road_type="highway", speed_limit=70),
+    ]
+    mumbai_edges = [
+        Edge(source="BOM_1", target="BOM_2", distance=6.0, time=8.0, cost=60.0, fuel=2.5),
+        Edge(source="BOM_2", target="BOM_3", distance=7.0, time=9.0, cost=70.0, fuel=2.8),
+    ]
 
-        # 1. Concurrent /build-graph calls
-        delhi_bg_task = build_graph(nodes=delhi_nodes, edges=delhi_edges)
-        mumbai_bg_task = build_graph(nodes=mumbai_nodes, edges=mumbai_edges)
-        delhi_bg_res, mumbai_bg_res = await asyncio.gather(delhi_bg_task, mumbai_bg_task)
+    delhi_route_req = RouteRequest(
+        start_node="DEL_1",
+        end_node="DEL_3",
+        nodes=delhi_nodes,
+        edges=delhi_edges,
+        objectives=["time", "cost", "fuel"],
+    )
+    mumbai_route_req = RouteRequest(
+        start_node="BOM_1",
+        end_node="BOM_3",
+        nodes=mumbai_nodes,
+        edges=mumbai_edges,
+        objectives=["time", "cost", "fuel"],
+    )
 
-        assert delhi_bg_res["success"] is True
-        assert delhi_bg_res["data"]["nodes"] == 3
-        assert delhi_bg_res["data"]["edges"] == 2
+    barrier_bg = threading.Barrier(2)
+    barrier_opt = threading.Barrier(2)
 
-        assert mumbai_bg_res["success"] is True
-        assert mumbai_bg_res["data"]["nodes"] == 3
-        assert mumbai_bg_res["data"]["edges"] == 2
+    def run_delhi():
+        barrier_bg.wait()
+        bg_res = asyncio.run(build_graph(nodes=delhi_nodes, edges=delhi_edges))
+        barrier_opt.wait()
+        opt_res = asyncio.run(optimize_route(delhi_route_req))
+        return bg_res, opt_res
 
-        # 2. Concurrent /optimize-route calls with disjoint networks
-        delhi_route_req = RouteRequest(
-            start_node="DEL_1",
-            end_node="DEL_3",
-            nodes=delhi_nodes,
-            edges=delhi_edges,
-            objectives=["time", "cost", "fuel"],
+    def run_mumbai():
+        barrier_bg.wait()
+        bg_res = asyncio.run(build_graph(nodes=mumbai_nodes, edges=mumbai_edges))
+        barrier_opt.wait()
+        opt_res = asyncio.run(optimize_route(mumbai_route_req))
+        return bg_res, opt_res
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        fut_delhi = executor.submit(run_delhi)
+        fut_mumbai = executor.submit(run_mumbai)
+        delhi_bg_res, delhi_opt_res = fut_delhi.result()
+        mumbai_bg_res, mumbai_opt_res = fut_mumbai.result()
+
+    assert delhi_bg_res["success"] is True
+    assert delhi_bg_res["data"]["nodes"] == 3
+    assert delhi_bg_res["data"]["edges"] == 2
+
+    assert mumbai_bg_res["success"] is True
+    assert mumbai_bg_res["data"]["nodes"] == 3
+    assert mumbai_bg_res["data"]["edges"] == 2
+
+    assert delhi_opt_res["success"] is True
+    delhi_route = delhi_opt_res["data"]["route"]
+    assert len(delhi_route) == 2
+    assert [step["from"] for step in delhi_route] == ["DEL_1", "DEL_2"]
+    assert [step["to"] for step in delhi_route] == ["DEL_2", "DEL_3"]
+    # Delhi route must never reference any Mumbai node
+    for step in delhi_route:
+        assert "BOM" not in step["from"]
+        assert "BOM" not in step["to"]
+
+    assert mumbai_opt_res["success"] is True
+    mumbai_route = mumbai_opt_res["data"]["route"]
+    assert len(mumbai_route) == 2
+    assert [step["from"] for step in mumbai_route] == ["BOM_1", "BOM_2"]
+    assert [step["to"] for step in mumbai_route] == ["BOM_2", "BOM_3"]
+    # Mumbai route must never reference any Delhi node
+    for step in mumbai_route:
+        assert "DEL" not in step["from"]
+        assert "DEL" not in step["to"]
+
+
+def test_barrier_synchronized_shared_builder_race():
+    """Verify that even when two parallel threads share the same GraphNetworkBuilder
+    instance and their build_road_network and get_pytorch_data calls are synchronized to
+    overlap via barriers, passing the graph explicitly into get_pytorch_data(graph)
+    guarantees that neither thread reads a corrupted or overwritten graph.
+    """
+    shared_builder = GraphNetworkBuilder()
+    barrier_after_first_build = threading.Barrier(2)
+    barrier_after_second_build = threading.Barrier(2)
+    results = {}
+
+    def thread_delhi():
+        # Step 1: Thread 1 builds Delhi on the shared builder
+        g_delhi = shared_builder.build_road_network(
+            [{"id": "DEL_1", "lat": 28.6, "lng": 77.2}, {"id": "DEL_2", "lat": 28.7, "lng": 77.3}],
+            [{"source": "DEL_1", "target": "DEL_2", "distance": 10.0, "time": 10.0}]
         )
-        mumbai_route_req = RouteRequest(
-            start_node="BOM_1",
-            end_node="BOM_3",
-            nodes=mumbai_nodes,
-            edges=mumbai_edges,
-            objectives=["time", "cost", "fuel"],
+        # Wait until Thread 1 finishes build before Thread 2 starts build
+        barrier_after_first_build.wait()
+        # Wait until Thread 2 finishes build on the same builder before Thread 1 extracts
+        barrier_after_second_build.wait()
+        # Step 2: Thread 1 extracts features for Delhi using the explicit graph argument
+        data_delhi = shared_builder.get_pytorch_data(g_delhi)
+        results["delhi"] = data_delhi
+
+    def thread_mumbai():
+        # Wait until Thread 1 finishes building Delhi
+        barrier_after_first_build.wait()
+        # Step 1: Thread 2 builds Mumbai on the same shared builder (mutating shared_builder.graph)
+        g_mumbai = shared_builder.build_road_network(
+            [{"id": "BOM_1", "lat": 19.0, "lng": 72.8}, {"id": "BOM_2", "lat": 19.1, "lng": 72.9}, {"id": "BOM_3", "lat": 19.2, "lng": 73.0}],
+            [{"source": "BOM_1", "target": "BOM_2", "distance": 5.0, "time": 5.0}, {"source": "BOM_2", "target": "BOM_3", "distance": 5.0, "time": 5.0}]
         )
+        # Notify Thread 1 that Mumbai build has finished (overwriting shared_builder.graph)
+        barrier_after_second_build.wait()
+        # Step 2: Thread 2 extracts features for Mumbai using the explicit graph argument
+        data_mumbai = shared_builder.get_pytorch_data(g_mumbai)
+        results["mumbai"] = data_mumbai
 
-        delhi_opt_task = optimize_route(delhi_route_req)
-        mumbai_opt_task = optimize_route(mumbai_route_req)
-        delhi_opt_res, mumbai_opt_res = await asyncio.gather(delhi_opt_task, mumbai_opt_task)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        fut1 = executor.submit(thread_delhi)
+        fut2 = executor.submit(thread_mumbai)
+        fut1.result()
+        fut2.result()
 
-        assert delhi_opt_res["success"] is True
-        delhi_route = delhi_opt_res["data"]["route"]
-        assert len(delhi_route) == 2
-        assert [step["from"] for step in delhi_route] == ["DEL_1", "DEL_2"]
-        assert [step["to"] for step in delhi_route] == ["DEL_2", "DEL_3"]
-        # Delhi route must never reference any Mumbai node
-        for step in delhi_route:
-            assert "BOM" not in step["from"]
-            assert "BOM" not in step["to"]
+    data_delhi = results["delhi"]
+    data_mumbai = results["mumbai"]
 
-        assert mumbai_opt_res["success"] is True
-        mumbai_route = mumbai_opt_res["data"]["route"]
-        assert len(mumbai_route) == 2
-        assert [step["from"] for step in mumbai_route] == ["BOM_1", "BOM_2"]
-        assert [step["to"] for step in mumbai_route] == ["BOM_2", "BOM_3"]
-        # Mumbai route must never reference any Delhi node
-        for step in mumbai_route:
-            assert "DEL" not in step["from"]
-            assert "DEL" not in step["to"]
+    # Delhi data must contain ONLY Delhi nodes, completely immune to Mumbai having overwritten shared_builder.graph
+    assert set(data_delhi.graph.nodes) == {"DEL_1", "DEL_2"}
+    assert set(data_delhi.node_map.keys()) == {"DEL_1", "DEL_2"}
+    assert data_delhi.x.shape[0] == 2
+    assert "BOM_1" not in data_delhi.graph.nodes
 
-    asyncio.run(_run())
+    # Mumbai data must contain ONLY Mumbai nodes
+    assert set(data_mumbai.graph.nodes) == {"BOM_1", "BOM_2", "BOM_3"}
+    assert set(data_mumbai.node_map.keys()) == {"BOM_1", "BOM_2", "BOM_3"}
+    assert data_mumbai.x.shape[0] == 3
+    assert "DEL_1" not in data_mumbai.graph.nodes
 
 
 def test_sequential_graph_isolation():

@@ -254,6 +254,10 @@ class RouteOptimizer:
                     f"Node feature dim mismatch: model expects {self.model.input_dim}, got {data.x.shape[1]}"
                 )
 
+            # Ensure model is in eval mode so BatchNorm layers do not update running stats during inference
+            if self.model is not None:
+                self.model.eval()
+
             # Get node embeddings
             with torch.no_grad():
                 embeddings = self.model(data.x, data.edge_index, data.edge_attr)
