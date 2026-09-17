@@ -196,4 +196,5 @@ class TestFindReturnLoads:
                 "payment_inr": 1000,
             }],
         )
-        assert result["recommendations"] == []
+        assert len(result["recommendations"]) == 1
+        assert result["recommendations"][0]["load_id"] == "L-TZ-WALL-CLOCK"
