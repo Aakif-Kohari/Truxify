@@ -69,7 +69,10 @@ const ESCROW_ABI = [
   'function raiseDispute(uint256 bookingId) external',
   'function resolveDispute(uint256 bookingId, uint256 driverAmount) external',
   'function resolveDisputeTimeout(uint256 bookingId) external',
-  'function bookings(uint256 bookingId) external view returns (address customer, address driver, uint256 amount, uint8 status, bool paid, bool started, uint256 createdAt, uint256 disputedAt)'
+  'function bookings(uint256 bookingId) external view returns (address customer, address driver, uint256 amount, uint8 status, bool paid, bool started, uint256 createdAt, uint256 disputedAt)',
+  'function pause() external',
+  'function unpause() external',
+  'function paused() external view returns (bool)'
 ]
 
 const rpcUrl            = process.env.POLYGON_RPC_URL;
@@ -1004,3 +1007,45 @@ export async function submitEscrowResolveDisputeTimeout (orderDisplayId) {
   })
 }
 export const lockPayment = escrowLockPayment;
+
+/**
+ * Open or close the on-chain escrow circuit breaker (Pausable).
+ * Called by internalRoutes when an emergency pause is triggered via n8n.
+ *
+ * @param {boolean} paused
+ * @returns {Promise<{success: boolean, txHash?: string, error?: string, alreadyInState?: boolean}>}
+ */
+export async function setEscrowContractPaused(paused) {
+  return measureExecution('EscrowService.setEscrowContractPaused', async () => {
+    if (!escrowContract) {
+      return { error: 'Escrow contract is not initialised' };
+    }
+
+    try {
+      const isCurrentlyPaused = await escrowContract.paused();
+      if (isCurrentlyPaused === paused) {
+        logger.info(`[escrow] On-chain pause state is already ${paused} — skipping transaction.`);
+        return { success: true, alreadyInState: true };
+      }
+
+      const tx = await withTimeout(paused ? escrowContract.pause() : escrowContract.unpause());
+      logger.info(`[escrow] On-chain ${paused ? 'pause' : 'unpause'} tx submitted: ${tx.hash}`);
+
+      const receipt = await tx.wait(1);
+      if (!receipt || receipt.status === 0) {
+        return { error: 'Transaction reverted or not found on chain' };
+      }
+
+      const isNowPaused = await escrowContract.paused();
+      if (isNowPaused !== paused) {
+        return { error: `Transaction succeeded but contract paused() is still ${isNowPaused}` };
+      }
+
+      logger.info(`[escrow] On-chain ${paused ? 'pause' : 'unpause'} confirmed in block ${receipt.blockNumber}`);
+      return { success: true, txHash: receipt.hash };
+    } catch (err) {
+      logger.error(`[escrow] Failed to ${paused ? 'pause' : 'unpause'} on-chain: ${err?.message ?? String(err)}`);
+      return { error: err?.message ?? String(err) };
+    }
+  });
+}
