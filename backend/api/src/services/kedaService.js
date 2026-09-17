@@ -128,7 +128,7 @@ class KEDAService {
         const interval = Number(options.intervalMs) || this.kedaPollInterval;
         const timeout = Number(options.timeoutMs) || this.kedaPollTimeout;
         const startedAt = Date.now();
-        let latestResult = null;
+        let latestResult;
 
         do {
             latestResult = await this.getScaledObjectStatus(namespace, scaledObjectName);
@@ -142,6 +142,11 @@ class KEDAService {
 
             await new Promise(resolve => setTimeout(resolve, interval));
         } while (Date.now() - startedAt < timeout);
+
+        logger.warn(
+            { namespace, scaledObjectName, timeoutMs: timeout },
+            'Timed out waiting for KEDA scaled object status',
+        );
 
         return {
             ...(latestResult || {
@@ -336,6 +341,26 @@ class KEDAService {
             metrics,
             timestamp: new Date().toISOString()
         };
+    }
+
+    
+    async getServiceHealthDiagnostics(namespace = 'default', deployment = 'api-service') {
+        try {
+            const autoscaling = await this.getAutoscalingMetrics(namespace, deployment);
+            return {
+                status: autoscaling.success ? 'HEALTHY' : 'DEGRADED',
+                diagnosticsTimestamp: new Date().toISOString(),
+                metricsStatus: autoscaling
+            };
+        } catch (error) {
+            const errorMessage = error?.message ?? String(error);
+            logger.error({ event: 'KEDA_DIAGNOSTICS_ERROR', error: errorMessage }, 'Health diagnostics failed');
+            return {
+                status: 'UNHEALTHY',
+                error: errorMessage,
+                diagnosticsTimestamp: new Date().toISOString()
+            };
+        }
     }
 
     async getStats() {
