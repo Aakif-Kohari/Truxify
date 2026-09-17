@@ -343,6 +343,160 @@ class KEDAService {
         };
     }
 
+    async getActiveOrders(dbClient) {
+        try {
+            const client = dbClient || (await import('../config/db.js')).supabase;
+            if (client) {
+                const { count, error } = await client
+                    .from('orders')
+                    .select('*', { count: 'exact', head: true })
+                    .in('status', ['active', 'in_transit', 'en_route_pickup', 'accepted']);
+
+                if (error) {
+                    logger.error({ event: 'KEDA_ACTIVE_ORDERS_ERROR', error: error.message }, 'Failed to fetch active orders count from DB');
+                    return {
+                        success: false,
+                        metric: 'active_orders',
+                        error: error.message,
+                        timestamp: new Date().toISOString()
+                    };
+                }
+
+                return {
+                    success: true,
+                    metric: 'active_orders',
+                    value: typeof count === 'number' ? count : 0,
+                    timestamp: new Date().toISOString()
+                };
+            }
+            return await this.getMetrics('active_orders', 'sum(truxify_active_orders)');
+        } catch (error) {
+            logger.error({ event: 'KEDA_ACTIVE_ORDERS_ERROR', error: error?.message }, 'Active orders fetch failed');
+            return {
+                success: false,
+                metric: 'active_orders',
+                error: error?.message ?? String(error),
+                timestamp: new Date().toISOString()
+            };
+        }
+    }
+
+    async getActiveDrivers(dbClient) {
+        try {
+            const client = dbClient || (await import('../config/db.js')).supabase;
+            if (client) {
+                const { count, error } = await client
+                    .from('profiles')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('role', 'driver')
+                    .eq('is_available', true);
+
+                if (error) {
+                    logger.error({ event: 'KEDA_ACTIVE_DRIVERS_ERROR', error: error.message }, 'Failed to fetch active drivers count from DB');
+                    return {
+                        success: false,
+                        metric: 'active_drivers',
+                        error: error.message,
+                        timestamp: new Date().toISOString()
+                    };
+                }
+
+                return {
+                    success: true,
+                    metric: 'active_drivers',
+                    value: typeof count === 'number' ? count : 0,
+                    timestamp: new Date().toISOString()
+                };
+            }
+            return await this.getMetrics('active_drivers', 'sum(truxify_active_drivers)');
+        } catch (error) {
+            logger.error({ event: 'KEDA_ACTIVE_DRIVERS_ERROR', error: error?.message }, 'Active drivers fetch failed');
+            return {
+                success: false,
+                metric: 'active_drivers',
+                error: error?.message ?? String(error),
+                timestamp: new Date().toISOString()
+            };
+        }
+    }
+
+    async getQueueDepth(queueName = 'orders') {
+        const safeQueue = this._sanitizePromqlInput(queueName);
+        const query = `sum(truxify_queue_depth{queue="${safeQueue}"})`;
+        const result = await this.getMetrics('queue_depth', query);
+        if (!result.success) {
+            return { ...result, queue: safeQueue };
+        }
+        return {
+            success: true,
+            queue: safeQueue,
+            depth: result.value,
+            timestamp: result.timestamp
+        };
+    }
+
+    generateScaledObjectConfig(options = {}) {
+        const {
+            name = 'api-scaledobject',
+            namespace = 'truxify',
+            targetDeployment = 'api-deployment',
+            minReplicas = 1,
+            maxReplicas = 10,
+            pollingInterval = 30,
+            cooldownPeriod = 300,
+            triggers = []
+        } = options;
+
+        if (!name || typeof name !== 'string' || !name.trim()) {
+            throw new Error('ScaledObject name is required and must be a string');
+        }
+        if (!namespace || typeof namespace !== 'string' || !namespace.trim()) {
+            throw new Error('ScaledObject namespace is required and must be a string');
+        }
+        if (!targetDeployment || typeof targetDeployment !== 'string' || !targetDeployment.trim()) {
+            throw new Error('targetDeployment is required and must be a string');
+        }
+
+        const formattedTriggers = Array.isArray(triggers) && triggers.length > 0
+            ? triggers
+            : [
+                {
+                    type: 'prometheus',
+                    metadata: {
+                        serverAddress: this.prometheusUrl,
+                        metricName: 'api_requests',
+                        query: 'sum(rate(istio_requests_total{reporter="destination",destination_service=~"api-service.*"}[5m]))',
+                        threshold: '100'
+                    }
+                }
+            ];
+
+        return {
+            apiVersion: 'keda.sh/v1alpha1',
+            kind: 'ScaledObject',
+            metadata: {
+                name: name.trim(),
+                namespace: namespace.trim(),
+                labels: {
+                    'app.kubernetes.io/name': name.trim(),
+                    'app.kubernetes.io/part-of': 'truxify'
+                }
+            },
+            spec: {
+                scaleTargetRef: {
+                    apiVersion: 'apps/v1',
+                    kind: 'Deployment',
+                    name: targetDeployment.trim()
+                },
+                minReplicaCount: Math.max(0, Number(minReplicas) || 1),
+                maxReplicaCount: Math.max(1, Number(maxReplicas) || 10),
+                pollingInterval: Math.max(1, Number(pollingInterval) || 30),
+                cooldownPeriod: Math.max(0, Number(cooldownPeriod) || 300),
+                triggers: formattedTriggers
+            }
+        };
+    }
+
     async getStats() {
         return {
             kafkaLagMetric: this.kafkaLagMetric,
