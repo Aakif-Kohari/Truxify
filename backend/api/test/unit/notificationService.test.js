@@ -279,6 +279,21 @@ describe('notificationService', () => {
       expect(result.summary.delivered).toBe(0);
       expect(result.summary.deactivated).toBe(0);
     });
+
+    it('returns controlled failure when Firebase messaging is unconfigured', async () => {
+      const dbModule = await import('../../src/config/db.js');
+      const originalMessaging = dbModule.firebaseAdmin.messaging;
+      dbModule.firebaseAdmin.messaging = null;
+
+      try {
+        const result = await sendFcmNotification('user-1', { title: 'Hi', body: 'There' }, {});
+        expect(result.success).toBe(false);
+        expect(result.errorCode).toBe('FCM_NOT_CONFIGURED');
+        expect(result.error).toBe('Firebase not configured');
+      } finally {
+        dbModule.firebaseAdmin.messaging = originalMessaging;
+      }
+    });
   });
 
   describe('sendDeliveryOtpNotification', () => {
@@ -385,6 +400,24 @@ describe('notificationService', () => {
 
       expect(result.success).toBe(false);
       expect(supabaseMock.store.notifications).toHaveLength(1);
+    });
+
+    it('continues FCM delivery even when database insertion fails', async () => {
+      seedDevices([{ fcm_token: 'token-a' }]);
+      firebaseMock.sendEachForMulticast.mockResolvedValue(okBatch(['token-a']));
+      supabaseMock.programErrorFor('notifications', 'insert', 'Database write failure');
+
+      const result = await sendPushNotification(
+        'user-1',
+        'Order updated',
+        'Your order is on the way',
+        'order_update',
+        {}
+      );
+
+      expect(firebaseMock.sendEachForMulticast).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+      expect(result.fcm.summary.delivered).toBe(1);
     });
 
     const VALID_TYPES = [
@@ -702,6 +735,19 @@ describe('notificationService', () => {
       expect(results).toHaveLength(1);
       expect(results[0].deviceId).toBe('profile-fallback');
       expect(results[0].success).toBe(true);
+    });
+
+    it('continues device delivery even if Redis publish throws an error', async () => {
+      seedDevices([{ id: 'dev-1', fcm_token: 'token-1' }]);
+      firebaseMock.send.mockResolvedValue('msg-id-ok');
+      mockRedis.publish.mockRejectedValueOnce(new Error('Redis publishing error'));
+
+      const payload = { notification: { title: 'Hello', body: 'World' } };
+      const results = await sendNotification('user-1', payload);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].success).toBe(true);
+      expect(firebaseMock.send).toHaveBeenCalledTimes(1);
     });
   });
 
