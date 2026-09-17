@@ -26,8 +26,8 @@ void main() {
       ),
     ];
 
-    expect(
-      () => service.optimizeRoute(stops, 0, 0),
+    await expectLater(
+      service.optimizeRoute(stops, 0, 0),
       throwsA(isA<StateError>()),
     );
   });
