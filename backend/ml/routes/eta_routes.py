@@ -76,6 +76,38 @@ def _order_is_assigned(order_id: str) -> bool:
         return False
 
 
+def _get_order_route(order_id: str) -> Optional[Dict[str, float]]:
+    """Return server-authoritative pickup and drop coordinates for an order."""
+    try:
+        from app.models.database import SessionLocal
+        db = SessionLocal()
+        try:
+            result = db.execute(
+                text(
+                    "SELECT pickup_lat, pickup_lng, drop_lat, drop_lng "
+                    "FROM orders WHERE order_display_id = :oid"
+                ),
+                {"oid": order_id},
+            ).mappings().first()
+            if result is None:
+                return None
+
+            coordinates = {
+                "source_lat": result["pickup_lat"],
+                "source_lng": result["pickup_lng"],
+                "dest_lat": result["drop_lat"],
+                "dest_lng": result["drop_lng"],
+            }
+            if any(value is None for value in coordinates.values()):
+                return None
+            return {key: float(value) for key, value in coordinates.items()}
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Order route lookup failed for {order_id}: {e}")
+        return None
+
+
 @router.post("/predict")
 async def predict_eta(request: ETARequest, _auth=Depends(verify_api_key)):
     """Predict ETA for a trip"""
@@ -151,8 +183,12 @@ async def update_eta(order_id: str, request: ETAUpdateRequest, _auth=Depends(ver
     if not _order_is_assigned(order_id):
         raise HTTPException(status_code=404, detail="Order not found or not assigned to a driver")
 
+    order_route = _get_order_route(order_id)
+    if order_route is None:
+        raise HTTPException(status_code=404, detail="Order route coordinates unavailable")
+
     current_location = {'lat': request.current_lat, 'lng': request.current_lng}
-    destination = {'lat': request.dest_lat, 'lng': request.dest_lng}
+    destination = {'lat': order_route['dest_lat'], 'lng': order_route['dest_lng']}
 
     result = await traffic_pipeline.update_eta_realtime(
         order_id,
