@@ -1,4 +1,17 @@
 import refreshTokenService from '../services/refreshTokenService.js';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'truxify-jwt-secret-key';
+
+const createAccessToken = (tokenRecord) => jwt.sign(
+  {
+    id: tokenRecord.user_id,
+    uid: tokenRecord.user_id,
+    iss: 'truxify-backend-api',
+  },
+  JWT_SECRET,
+  { expiresIn: '7d' },
+);
 
 export const refreshToken = async (req, res) => {
   try {
@@ -9,7 +22,7 @@ export const refreshToken = async (req, res) => {
     }
 
     const newTokenData = await refreshTokenService.rotateRefreshToken(token, deviceId, deviceInfo);
-    const newAccessToken = 'new-jwt-access-token-placeholder';
+    const newAccessToken = createAccessToken(newTokenData);
 
     return res.status(200).json({
       success: true,
