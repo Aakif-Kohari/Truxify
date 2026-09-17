@@ -58,6 +58,7 @@ import {
   OTP_LOCKOUT_MINUTES,
 } from "../services/order/orderNotificationService.js";
 import logger from "../middleware/logger.js";
+import { refreshToken } from "../controllers/authController.js";
 
 const router = express.Router();
 
@@ -73,6 +74,11 @@ const authLimiter = rateLimit({
 });
 
 router.use(authLimiter);
+
+/**
+ * Exchange a valid rotating refresh token for a backend JWT and a new refresh token.
+ */
+router.post("/refresh", refreshToken);
 
 export function withTimeout(operation, timeoutMs, message) {
   let timer;
@@ -357,7 +363,7 @@ router.post("/verify-otp", otpVerificationLimiter, async (req, res) => {
   }
 });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'truxify-jwt-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
  * @openapi
@@ -481,6 +487,11 @@ router.post("/verify", async (req, res) => {
 
     if (!userId) {
       userId = `usr-${verifiedUid.slice(-8)}`;
+    }
+
+    if (!JWT_SECRET) {
+      logger.error('[auth/verify] JWT_SECRET is not configured');
+      return res.status(503).json({ success: false, error: 'Authentication service is temporarily unavailable.' });
     }
 
     const backendJwt = jwt.sign(

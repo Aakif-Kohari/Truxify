@@ -6,6 +6,7 @@ import telemetryBuffer from "./telemetryBuffer.js";
 import { CLOCK_SKEW_TOLERANCE_MS } from "./tracker.js";
 
 let io = null;
+let _orderRepository = null;
 
 // ─── Heartbeat / dead-connection sweep ───────────────────────────────────────
 
@@ -596,6 +597,26 @@ async function verifyBookingOwnership(customerId, bookingId) {
   } catch (err) {
     logger.error({ err }, '[WS] isCustomerAuthorized error');
     return false;
+  }
+}
+
+/**
+ * Broadcasts an ETA update to customers subscribed to a booking room.
+ * Mirrors the tracker.js `eta_update` event payload for Socket.IO clients.
+ */
+export function emitEtaUpdateToBooking(bookingId, eta) {
+  if (!io || !bookingId || !eta) return;
+
+  try {
+    io.of("/customer")
+      .to(`booking:${bookingId}`)
+      .emit("eta_update", {
+        eta,
+        bookingId,
+        timestamp: new Date().toISOString(),
+      });
+  } catch (error) {
+    logger.error({ bookingId, error: error.message }, '[WS] ETA broadcast error');
   }
 }
 

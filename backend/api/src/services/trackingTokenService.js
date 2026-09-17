@@ -3,6 +3,7 @@ import logger from '../middleware/logger.js';
 
 const TOKEN_BYTE_LENGTH = 32;
 const TOKEN_EXPIRY_DAYS = 7;
+const PUBLIC_TRACKING_LOCATION_FRESHNESS_SECONDS = parseInt(process.env.PUBLIC_TRACKING_LOCATION_FRESHNESS_SECONDS || '900', 10);
 
 // Helper to validate standard UUID format
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -221,7 +222,7 @@ export class TrackingTokenService {
 
   async getOrderRouteCoords(orderDisplayId) {
     if (!this._supabaseAdmin) {
-      this._logger.error('getOrderRouteCoords requires service-role client');
+      this._logger.error('getOrderRouteCoords requires supabaseAdmin service-role client');
       throw new Error('Service-role client required for order route coordinates');
     }
 
@@ -301,11 +302,13 @@ export class TrackingTokenService {
       return null;
     }
 
+    const freshnessCutoff = new Date(Date.now() - PUBLIC_TRACKING_LOCATION_FRESHNESS_SECONDS * 1000).toISOString();
     const { data: location, error: locationError } = await this._supabaseAdmin
       .from('driver_locations')
       .select('latitude, longitude, last_updated_at')
       .eq('driver_id', order.driver_id)
       .eq('is_active', true)
+      .gte('last_updated_at', freshnessCutoff)
       .order('last_updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -322,6 +325,7 @@ export class TrackingTokenService {
   }
 }
 
+/*
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const locationService = require('./locationService');
@@ -389,3 +393,4 @@ module.exports = {
   validateTrackingToken,
   updateLocationWithToken,
 };
+*/
