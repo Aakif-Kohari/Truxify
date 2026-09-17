@@ -392,9 +392,9 @@ class RouteOptimizer:
         # Non-negative weight guard for Dijkstra
         return max(score, 1e-6)
     
-    def train(self, train_data, val_data=None, epochs=100):
+    def train(self, train_data, val_data=None, epochs=100, learning_rate=0.001):
         """Train GNN model"""
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         criterion = nn.MSELoss()
         
         for epoch in range(epochs):
