@@ -35,6 +35,45 @@ from federated.federated_server import FederatedServer, is_valid_fernet_key, ato
 from federated.federated_client import FederatedClient
 
 
+class RecordingPipeline:
+    """Fake Redis pipeline recording commands and executing them atomically."""
+
+    def __init__(self, redis_instance):
+        self.redis = redis_instance
+        self.commands = []
+
+    def sadd(self, key, *members):
+        self.commands.append(("sadd", key, members))
+        return self
+
+    def set(self, key, value, nx=False):
+        self.commands.append(("set", key, value, nx))
+        return self
+
+    def get(self, key):
+        self.commands.append(("get", key))
+        return self
+
+    def delete(self, *keys):
+        self.commands.append(("delete", keys))
+        return self
+
+    def execute(self):
+        self.redis.operations.append(("pipeline_execute", [cmd[0] for cmd in self.commands]))
+        results = []
+        for cmd in self.commands:
+            op = cmd[0]
+            if op == "sadd":
+                results.append(self.redis.sadd(cmd[1], *cmd[2]))
+            elif op == "set":
+                results.append(self.redis.set(cmd[1], cmd[2], nx=cmd[3]))
+            elif op == "get":
+                results.append(self.redis.get(cmd[1]))
+            elif op == "delete":
+                results.append(self.redis.delete(*cmd[1]))
+        return results
+
+
 class RecordingRedis:
     """In-memory Redis fake with operation recording for TTL and race verification."""
 
@@ -85,6 +124,7 @@ class RecordingRedis:
         return count
 
     def sadd(self, key, *members):
+        self.operations.append(("sadd", key, members))
         if key not in self.sets:
             self.sets[key] = set()
         count = 0
@@ -105,6 +145,10 @@ class RecordingRedis:
         ps = MagicMock()
         ps.run_in_thread.return_value = MagicMock()
         return ps
+
+    def pipeline(self, transaction=True):
+        self.operations.append(("pipeline", transaction))
+        return RecordingPipeline(self)
 
 
 @pytest.fixture(autouse=True)
@@ -292,4 +336,140 @@ class TestFederatedEncryption:
             server = FederatedServer()
             assert server.encryption_key == legacy_key
             assert server.cipher.decrypt(legacy_ciphertext) == legacy_payload
+            server.stop_update_consumer()
+
+    def test_pending_weights_remain_decryptable_after_key_rotation(self):
+        """1. Ensure pending weights encrypted with old key remain decryptable after rotation."""
+        fake = RecordingRedis()
+        with patch("redis.Redis.from_url", return_value=fake):
+            server = FederatedServer()
+            key_old = server.encryption_key
+            assert is_valid_fernet_key(key_old)
+
+            # Server sends weights to client1 encrypted under key_old
+            weights = [
+                np.ones((10, 64)), np.zeros((64,)),
+                np.zeros((64, 32)), np.zeros((32,)),
+                np.zeros((32, 1)), np.zeros((1,)),
+            ]
+            server._send_weights_to_client("client1", weights)
+            assert fake.get("federated:weights:client1") is not None
+
+            # Key rotation occurs on server
+            rotate_res = server.rotate_encryption_key()
+            assert rotate_res["success"] is True
+            key_new = server.encryption_key
+            assert key_new != key_old
+
+            # Client initialized after rotation (loads key_new as active and key_old as historical)
+            client = FederatedClient("client1", redis_url=fake)
+            assert client.encryption_key == key_new
+            assert key_old in client.historical_keys
+
+            # Client receives pending weights that were encrypted with key_old
+            assert client.receive_weights() is True
+            # Verify weights were correctly decrypted and passed to local model
+            assert client.model.set_weights.called
+            called_weights = client.model.set_weights.call_args[0][0]
+            np.testing.assert_array_equal(called_weights[0], weights[0])
+
+            client.stop_subscription()
+            server.stop_update_consumer()
+
+    def test_cipher_never_activated_on_redis_persistence_failure(self):
+        """2. Never activate/build a Fernet cipher unless Redis successfully persists or returns active key."""
+        # Case A: Candidate key generation fails to persist in Redis
+        failing_redis = MagicMock()
+        failing_redis.set.side_effect = Exception("Redis connection refused")
+        failing_redis.get.side_effect = Exception("Redis connection refused")
+        failing_redis.smembers.return_value = set()
+
+        # atomic_init_key must return None on failure
+        candidate = Fernet.generate_key()
+        res = atomic_init_key(failing_redis, "federated:encryption_key", candidate)
+        assert res is None
+
+        with patch("redis.Redis.from_url", return_value=failing_redis):
+            server = FederatedServer()
+            assert server.encryption_key is None
+            assert server.cipher is None
+            server.stop_update_consumer()
+
+        # Case B: FEDERATED_ENCRYPTION_KEY fails to persist in Redis
+        env_key = Fernet.generate_key().decode("utf-8")
+        with patch.dict(os.environ, {"FEDERATED_ENCRYPTION_KEY": env_key}):
+            with patch("redis.Redis.from_url", return_value=failing_redis):
+                server_env = FederatedServer()
+                assert server_env.encryption_key is None
+                assert server_env.cipher is None
+                server_env.stop_update_consumer()
+
+    def test_environment_key_replaces_existing_redis_key_with_archival(self):
+        """3. When FEDERATED_ENCRYPTION_KEY replaces existing Redis key, archive old key before activating new one."""
+        fake = RecordingRedis()
+        existing_key = Fernet.generate_key()
+        fake.set("federated:encryption_key", existing_key)
+
+        # Encrypt a payload with existing_key
+        existing_cipher = Fernet(existing_key)
+        old_payload = json.dumps({"round": 1, "data": "pre-env-replacement"}).encode()
+        old_ciphertext = existing_cipher.encrypt(old_payload)
+
+        # New env key
+        new_env_key = Fernet.generate_key().decode("utf-8")
+        with patch.dict(os.environ, {"FEDERATED_ENCRYPTION_KEY": new_env_key}):
+            with patch("redis.Redis.from_url", return_value=fake):
+                server = FederatedServer()
+                # Verify new key is active
+                assert server.encryption_key == new_env_key.encode("utf-8")
+                assert fake.get("federated:encryption_key") == new_env_key.encode("utf-8")
+
+                # Verify old key was archived into Redis history set and loaded
+                history_set = fake.smembers("federated:keys:history")
+                assert existing_key in history_set
+                assert existing_key in server.historical_keys
+
+                # Verify old ciphertext is still decryptable by server MultiFernet
+                assert server.cipher.decrypt(old_ciphertext) == old_payload
+
+                # Verify client loads both and can decrypt old ciphertext
+                client = FederatedClient("client-env", redis_url=fake)
+                assert client.encryption_key == new_env_key.encode("utf-8")
+                assert existing_key in client.historical_keys
+                assert client.cipher.decrypt(old_ciphertext) == old_payload
+
+                client.stop_subscription()
+                server.stop_update_consumer()
+
+    def test_atomic_key_rotation_in_redis_and_local_state_rollback_on_failure(self):
+        """4. Make key rotation atomic in Redis (archive old + set new together) and update local state only on success."""
+        fake = RecordingRedis()
+        with patch("redis.Redis.from_url", return_value=fake):
+            server = FederatedServer()
+            key_initial = server.encryption_key
+
+            # 4a: Successful atomic rotation uses pipeline
+            res = server.rotate_encryption_key()
+            assert res["success"] is True
+            key_rotated = server.encryption_key
+            assert key_rotated != key_initial
+            assert key_initial in server.historical_keys
+
+            # Verify pipeline was called for atomic execution
+            pipe_ops = [op for op in fake.operations if op[0] == "pipeline_execute"]
+            assert len(pipe_ops) > 0
+            assert "sadd" in pipe_ops[-1][1] and "set" in pipe_ops[-1][1]
+
+            # 4b: Simulate Redis failure during pipeline execution
+            with patch.object(RecordingPipeline, "execute", side_effect=Exception("Redis atomic pipeline write failed")):
+                failed_res = server.rotate_encryption_key()
+                assert failed_res["success"] is False
+                assert "Redis atomic pipeline write failed" in failed_res["error"]
+
+                # Local state MUST NOT be modified
+                assert server.encryption_key == key_rotated
+                assert key_rotated not in server.historical_keys
+                # Redis key MUST NOT be modified
+                assert fake.get("federated:encryption_key") == key_rotated
+
             server.stop_update_consumer()

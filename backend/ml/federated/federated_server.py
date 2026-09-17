@@ -26,10 +26,14 @@ def is_valid_fernet_key(key: Any) -> bool:
         return False
 
 
-def atomic_init_key(redis_client, key: str, value: bytes) -> bytes:
-    """Atomically set candidate key in Redis if absent; otherwise return existing winning key."""
+def atomic_init_key(redis_client, key: str, value: bytes) -> Optional[bytes]:
+    """Atomically set candidate key in Redis if absent; otherwise return existing winning key.
+
+    Returns None if Redis client is unavailable or communication fails, ensuring unpersisted
+    keys are never treated as active.
+    """
     if redis_client is None:
-        return value
+        return None
     try:
         set_success = False
         try:
@@ -39,21 +43,23 @@ def atomic_init_key(redis_client, key: str, value: bytes) -> bytes:
         except TypeError:
             if hasattr(redis_client, 'setnx'):
                 set_success = bool(redis_client.setnx(key, value))
-            else:
-                if not redis_client.get(key):
-                    redis_client.set(key, value)
-                    set_success = True
 
         if set_success:
             return value
 
+        # If nx did not set, check if a valid Fernet key already exists
         winner = redis_client.get(key)
         if winner and is_valid_fernet_key(winner):
             return winner if isinstance(winner, bytes) else winner.encode('utf-8')
+
+        # If key was absent, None, or invalid in Redis, persist the candidate key
+        res = redis_client.set(key, value)
+        if res:
+            return value
     except Exception as e:
         logger.warning(f"Error in atomic Redis key initialization for {key}: {e}")
 
-    return value
+    return None
 
 
 def atomic_getdel(redis_client, key: str):
@@ -137,19 +143,45 @@ class FederatedServer:
     def _init_encryption_keys(self):
         """Initialize encryption key material with persistence, multi-replica race protection, and MultiFernet.
 
-        1. Checks FEDERATED_ENCRYPTION_KEY environment variable.
+        1. Checks FEDERATED_ENCRYPTION_KEY environment variable. If replacing an existing Redis key,
+           archives the old key into 'federated:keys:history' before activating the new one.
         2. Otherwise loads existing persistent key and historical keyring from Redis.
         3. Only generates a new key when no valid key exists anywhere, using atomic initialization.
         4. Never applies a 24-hour TTL on active keys.
+        5. Never activates or builds a cipher unless Redis successfully persists or returns the valid active key.
         """
         env_key = os.getenv('FEDERATED_ENCRYPTION_KEY')
         if env_key:
             env_key_bytes = env_key.encode('utf-8') if isinstance(env_key, str) else env_key
             if is_valid_fernet_key(env_key_bytes):
-                self.encryption_key = env_key_bytes
-                self._persist_active_key(self.encryption_key)
-                self._load_historical_keys()
-                self._build_cipher()
+                existing_key = self._get_redis_active_key()
+                persist_success = False
+                try:
+                    if existing_key and existing_key != env_key_bytes:
+                        # Archive existing key before activating new env key
+                        if hasattr(self.redis, 'pipeline'):
+                            pipe = self.redis.pipeline(transaction=True)
+                            pipe.sadd('federated:keys:history', existing_key)
+                            pipe.set('federated:encryption_key', env_key_bytes)
+                            pipe.execute()
+                        else:
+                            self.redis.sadd('federated:keys:history', existing_key)
+                            self.redis.set('federated:encryption_key', env_key_bytes)
+                        persist_success = True
+                    else:
+                        persist_success = self._persist_active_key(env_key_bytes)
+                except Exception as e:
+                    logger.error(f"Failed to persist FEDERATED_ENCRYPTION_KEY to Redis: {e}")
+                    persist_success = False
+
+                if persist_success:
+                    self.encryption_key = env_key_bytes
+                    self._load_historical_keys()
+                    self._build_cipher()
+                else:
+                    logger.error("Could not persist FEDERATED_ENCRYPTION_KEY in Redis; cipher not initialized")
+                    self.encryption_key = None
+                    self.cipher = None
                 return
             else:
                 logger.error("Supplied FEDERATED_ENCRYPTION_KEY is not a valid Fernet key; falling back to Redis storage")
@@ -162,9 +194,15 @@ class FederatedServer:
             return
 
         new_key = Fernet.generate_key()
-        self.encryption_key = atomic_init_key(self.redis, 'federated:encryption_key', new_key)
-        self._load_historical_keys()
-        self._build_cipher()
+        persisted_key = atomic_init_key(self.redis, 'federated:encryption_key', new_key)
+        if persisted_key and is_valid_fernet_key(persisted_key):
+            self.encryption_key = persisted_key
+            self._load_historical_keys()
+            self._build_cipher()
+        else:
+            logger.error("Failed to persist or obtain active encryption key from Redis; cipher not initialized")
+            self.encryption_key = None
+            self.cipher = None
 
     def _get_redis_active_key(self) -> Optional[bytes]:
         """Fetch active encryption key from Redis without mutating."""
@@ -176,12 +214,17 @@ class FederatedServer:
             logger.warning(f"Failed to read encryption key from Redis: {e}")
         return None
 
-    def _persist_active_key(self, key_bytes: bytes):
-        """Store active key permanently in Redis without TTL."""
+    def _persist_active_key(self, key_bytes: bytes) -> bool:
+        """Store active key permanently in Redis without TTL.
+
+        Returns True on success, False if Redis persistence fails.
+        """
         try:
-            self.redis.set('federated:encryption_key', key_bytes)
+            res = self.redis.set('federated:encryption_key', key_bytes)
+            return bool(res)
         except Exception as e:
             logger.warning(f"Failed to persist encryption key to Redis: {e}")
+            return False
 
     def _load_historical_keys(self):
         """Load historical encryption keys from Redis."""
@@ -197,9 +240,30 @@ class FederatedServer:
         except Exception as e:
             logger.warning(f"Failed to load historical keys from Redis: {e}")
 
+    def _refresh_keys_from_redis(self) -> bool:
+        """Refresh active and historical keys from Redis and rebuild cipher."""
+        try:
+            if not self.encryption_key or not self.cipher:
+                self._init_encryption_keys()
+                return self.cipher is not None
+            active_key = self._get_redis_active_key()
+            if active_key and is_valid_fernet_key(active_key):
+                self.encryption_key = active_key
+            self._load_historical_keys()
+            self._build_cipher()
+            return self.cipher is not None
+        except Exception as e:
+            logger.warning(f"Failed to refresh keys from Redis: {e}")
+            return False
+
     def _build_cipher(self):
         """Build MultiFernet cipher using active key as primary and historical keys for decryption fallback."""
-        fernets = [Fernet(self.encryption_key)] + [Fernet(k) for k in self.historical_keys]
+        if not self.encryption_key or not is_valid_fernet_key(self.encryption_key):
+            self.cipher = None
+            return
+        fernets = [Fernet(self.encryption_key)] + [
+            Fernet(k) for k in self.historical_keys if is_valid_fernet_key(k)
+        ]
         self.cipher = MultiFernet(fernets)
 
     def rotate_encryption_key(self, new_key: Optional[bytes] = None) -> Dict[str, Any]:
@@ -207,6 +271,8 @@ class FederatedServer:
 
         Preserves backward compatibility: historical keys remain capable of decrypting
         in-flight ciphertext, while all subsequent encryptions use the new primary key.
+        Atomically updates Redis (archive old key + set new active key) and modifies
+        local state only after success.
         """
         if new_key is not None:
             new_key_bytes = new_key.encode('utf-8') if isinstance(new_key, str) else new_key
@@ -216,15 +282,30 @@ class FederatedServer:
             new_key_bytes = Fernet.generate_key()
 
         old_key = self.encryption_key
+
+        # Atomic update in Redis: archive old key + set new active key together
+        try:
+            if hasattr(self.redis, 'pipeline'):
+                pipe = self.redis.pipeline(transaction=True)
+                if old_key:
+                    pipe.sadd('federated:keys:history', old_key)
+                pipe.set('federated:encryption_key', new_key_bytes)
+                pipe.execute()
+            else:
+                if old_key:
+                    self.redis.sadd('federated:keys:history', old_key)
+                self.redis.set('federated:encryption_key', new_key_bytes)
+        except Exception as e:
+            logger.error(f"Failed to atomically rotate encryption key in Redis: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'historical_keys_count': len(self.historical_keys)
+            }
+
+        # Update local state ONLY after success
         if old_key and old_key not in self.historical_keys:
             self.historical_keys.insert(0, old_key)
-
-        try:
-            if old_key:
-                self.redis.sadd('federated:keys:history', old_key)
-            self.redis.set('federated:encryption_key', new_key_bytes)
-        except Exception as e:
-            logger.warning(f"Failed to persist key rotation to Redis: {e}")
 
         self.encryption_key = new_key_bytes
         self._build_cipher()
@@ -319,6 +400,11 @@ class FederatedServer:
 
     def _send_weights_to_client(self, client_id, weights):
         """Send model weights to client with round metadata envelope"""
+        if not self.cipher:
+            if not self._refresh_keys_from_redis() or not self.cipher:
+                logger.error(f"Cannot send weights to client {client_id}: cipher not initialized")
+                return
+
         # Serialize weights with round metadata envelope
         weights_serialized = [w.tolist() for w in weights]
         payload = {
@@ -472,15 +558,31 @@ class FederatedServer:
                 )
                 return {'success': False, 'error': 'unauthorized client or not selected this round'}
 
+            if not self.cipher:
+                if not self._refresh_keys_from_redis() or not self.cipher:
+                    logger.error(f"Cannot receive client update from {client_id}: cipher not initialized")
+                    return {'success': False, 'error': 'cipher not initialized'}
+
             # Decrypt the envelope
             try:
                 decrypted = self.cipher.decrypt(encrypted_weights)
             except InvalidToken:
-                logger.error(
-                    f"Failed to decrypt client update from {client_id}: InvalidToken "
-                    f"(tried active key and {len(self.historical_keys)} historical keys)"
-                )
-                return {'success': False, 'error': 'InvalidToken: failed to decrypt client update with active or historical keys'}
+                # Attempt to refresh keys from Redis in case a rotation occurred in another replica
+                if self._refresh_keys_from_redis() and self.cipher:
+                    try:
+                        decrypted = self.cipher.decrypt(encrypted_weights)
+                    except InvalidToken:
+                        logger.error(
+                            f"Failed to decrypt client update from {client_id}: InvalidToken "
+                            f"(tried active key and {len(self.historical_keys)} historical keys)"
+                        )
+                        return {'success': False, 'error': 'InvalidToken: failed to decrypt client update with active or historical keys'}
+                else:
+                    logger.error(
+                        f"Failed to decrypt client update from {client_id}: InvalidToken "
+                        f"(tried active key and {len(self.historical_keys)} historical keys)"
+                    )
+                    return {'success': False, 'error': 'InvalidToken: failed to decrypt client update with active or historical keys'}
             except Exception as dec_err:
                 logger.error(f"Error decrypting update from {client_id}: {dec_err}")
                 return {'success': False, 'error': f'Decryption error: {str(dec_err)}'}
@@ -637,7 +739,12 @@ class FederatedServer:
         """Broadcast updated model to clients"""
         if self.global_weights is None:
             return
-        
+
+        if not self.cipher:
+            if not self._refresh_keys_from_redis() or not self.cipher:
+                logger.error("Cannot broadcast model: cipher not initialized")
+                return
+
         # Serialize weights
         weights_serialized = [w.tolist() for w in self.global_weights]
         weights_json = json.dumps(weights_serialized)

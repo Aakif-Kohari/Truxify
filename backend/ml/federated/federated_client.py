@@ -4,8 +4,8 @@ from tensorflow import keras
 import redis
 import json
 import logging
-from typing import Dict, Any, Optional
-from cryptography.fernet import Fernet, InvalidToken
+from typing import Dict, Any, Optional, List
+from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 import os
 import time
 
@@ -35,6 +35,7 @@ class FederatedClient:
         self.model = self._create_model()
         self.local_data = None
         self.encryption_key = None
+        self.historical_keys: List[bytes] = []
         self.cipher = None
         self.training_round = 0
         self.pubsub = None
@@ -76,7 +77,7 @@ class FederatedClient:
             logger.warning(f"Failed to register client {self.client_id} with Redis: {e}")
 
     def refresh_encryption_key(self) -> bool:
-        """Fetch the latest active encryption key from Redis and initialize cipher.
+        """Fetch the latest active encryption key and historical keys from Redis and initialize cipher.
 
         Returns True if a valid key was retrieved and cipher configured, False otherwise.
         """
@@ -91,13 +92,41 @@ class FederatedClient:
                 logger.warning(f"Malformed encryption key found in Redis for client {self.client_id}")
                 return False
 
+            # Archive previous active key if rotating
+            if self.encryption_key and self.encryption_key != key_bytes and self.encryption_key not in self.historical_keys:
+                self.historical_keys.insert(0, self.encryption_key)
+
             self.encryption_key = key_bytes
-            self.cipher = Fernet(self.encryption_key)
+            self._load_historical_keys()
+            self._build_cipher()
             logger.debug(f"🔑 Client {self.client_id} updated encryption cipher from Redis")
             return True
         except Exception as e:
             logger.warning(f"Error refreshing encryption key for client {self.client_id}: {e}")
             return False
+
+    def _load_historical_keys(self):
+        """Load historical encryption keys from Redis."""
+        try:
+            members = self.redis.smembers('federated:keys:history')
+            if members:
+                for m in members:
+                    m_bytes = m.encode('utf-8') if isinstance(m, str) else m
+                    if is_valid_fernet_key(m_bytes) and m_bytes != self.encryption_key:
+                        if m_bytes not in self.historical_keys:
+                            self.historical_keys.append(m_bytes)
+        except Exception as e:
+            logger.warning(f"Failed to load historical keys from Redis for client {self.client_id}: {e}")
+
+    def _build_cipher(self):
+        """Build MultiFernet cipher using active key as primary and historical keys for decryption fallback."""
+        if not self.encryption_key or not is_valid_fernet_key(self.encryption_key):
+            self.cipher = None
+            return
+        fernets = [Fernet(self.encryption_key)] + [
+            Fernet(k) for k in self.historical_keys if is_valid_fernet_key(k)
+        ]
+        self.cipher = MultiFernet(fernets)
 
     def _subscribe_updates(self):
         """Subscribe to server updates via Redis Pub/Sub"""
@@ -146,7 +175,7 @@ class FederatedClient:
                 return False
 
             if not self.cipher:
-                if not self.refresh_encryption_key():
+                if not self.refresh_encryption_key() or not self.cipher:
                     logger.warning(f"Cannot decrypt weights for client {self.client_id}: encryption cipher unavailable")
                     return False
 
@@ -155,7 +184,7 @@ class FederatedClient:
                 decrypted = self.cipher.decrypt(encrypted)
             except InvalidToken:
                 logger.warning(f"InvalidToken decrypting weights for client {self.client_id}; attempting key refresh")
-                if self.refresh_encryption_key():
+                if self.refresh_encryption_key() and self.cipher:
                     try:
                         decrypted = self.cipher.decrypt(encrypted)
                     except InvalidToken:
@@ -243,7 +272,7 @@ class FederatedClient:
             weights_json = json.dumps(payload)
 
             if not self.cipher:
-                if not self.refresh_encryption_key():
+                if not self.refresh_encryption_key() or not self.cipher:
                     logger.error(f"Failed to send update for client {self.client_id}: cipher not initialized")
                     return {'success': False, 'error': 'Encryption cipher unavailable'}
 
