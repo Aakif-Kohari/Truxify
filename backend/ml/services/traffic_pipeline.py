@@ -17,6 +17,7 @@ try:
 except ImportError:
     tf = None
     keras = None
+    layers = None
     models = None
     HAS_TF = False
 import redis
@@ -114,7 +115,11 @@ class TrafficPipeline:
             pass
         
     def _load_or_create_model(self):
-        """Load existing LSTM model or create new"""
+        """Load existing LSTM model or create new, when TensorFlow is available."""
+        if not HAS_TF:
+            logger.warning("TensorFlow is unavailable; ETA model features are disabled")
+            return None
+
         model_path = 'models/eta_lstm.h5'
         if os.path.exists(model_path):
             logger.info("Loading existing LSTM model")
@@ -124,7 +129,10 @@ class TrafficPipeline:
             return self._create_lstm_model()
 
     def _create_lstm_model(self):
-        """Create LSTM model for ETA prediction"""
+        """Create LSTM model for ETA prediction."""
+        if not HAS_TF:
+            return None
+
         model = models.Sequential([
             layers.LSTM(64, input_shape=(60, 5), return_sequences=True),
             layers.Dropout(0.2),
@@ -319,6 +327,9 @@ class TrafficPipeline:
         speeds (issue #11666).
         """
         try:
+            if self.model is None:
+                logger.warning("ETA prediction unavailable because TensorFlow model is not loaded")
+                return None
             if route_data.ndim == 1:
                 route_data = route_data.reshape(1, -1)
             if route_data.shape[1] != 5:
@@ -343,6 +354,10 @@ class TrafficPipeline:
     
     def train_model(self, epochs=50, batch_size=32):
         """Train LSTM model on historical data"""
+        if self.model is None:
+            logger.warning("ETA training unavailable because TensorFlow is not installed")
+            return
+
         session = self.Session()
         try:
             data = session.query(TrafficData).all()
