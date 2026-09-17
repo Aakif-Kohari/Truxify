@@ -1,4 +1,4 @@
-from collections import OrderedDict
+from collections import defaultdict, deque
 
 import numpy as np
 
@@ -7,7 +7,7 @@ from services.traffic_pipeline import TrafficPipeline
 
 def make_pipeline():
     pipeline = object.__new__(TrafficPipeline)
-    pipeline._route_windows = OrderedDict()
+    pipeline._route_windows = defaultdict(lambda: deque(maxlen=60))
     pipeline._last_route_history_metrics = {
         'route_id': None,
         'route_signature': None,
