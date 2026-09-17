@@ -23,7 +23,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.x'
+          flutter-version: '3.22.0'
           channel: 'stable'
 
       - name: Install dependencies (customer app)
@@ -39,4 +39,4 @@ jobs:
         run: cd apps/driver && flutter test
 
       - name: Analyze (no errors)
-        run: flutter analyse apps/ packages/
+        run: flutter analyze apps/ packages/
