@@ -191,9 +191,11 @@ def _pack_packages(
                 break
 
         if not placed:
-            # Open a new shelf
+            # Open a new shelf and let try_place choose the actual orientation.
+            # The original package height cannot be used as a pre-check because
+            # another axis may legally become the shelf's vertical dimension.
             z_offset = sum(s.shelf_height for s in shelves)
-            if z_offset + pkg_height > truck_h:
+            if z_offset >= truck_h:
                 arrangements[idx] = {
                     "package_index": idx,
                     "position": {"x": 0.0, "y": 0.0, "z": 0.0},
