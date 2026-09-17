@@ -665,9 +665,13 @@ export class OrderRepository {
   // ===================================================================
 
   async insertReputationFailure(data) {
+    const payload = {
+      status: 'pending',
+      ...data,
+    };
     return this._retryableQuery(() => this.supabase
       .from('reputation_failures')
-      .insert(data), 'insertReputationFailure');
+      .insert(payload), 'insertReputationFailure');
   }
 
   // ===================================================================
