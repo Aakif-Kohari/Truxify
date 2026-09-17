@@ -65,6 +65,11 @@ class TestHaversine:
         assert _deadline_urgency(load, distance_km) < 1e5
         assert _deadline_urgency(load, distance_km, route_duration_seconds=7200) >= 1e5
 
+    def test_unreachable_route_duration_is_infeasible(self):
+        load = make_load(deadline_hours=24)
+        distance_km = _haversine(12.0, 77.0, 12.0, 77.0)
+        assert _deadline_urgency(load, distance_km, route_duration_seconds=float("inf")) >= 1e5
+
 
 class TestMatchBilateral:
     """Tests for the Hungarian-algorithm matching."""
@@ -139,6 +144,26 @@ class TestMatchBilateral:
             origin_lng=77.0,
             deadline_hours=1,
         )
+        driver = make_driver(current_lat=12.0, current_lng=77.0)
+        result = match_bilateral([load], [driver])
+        assert result["assignments"] == []
+        assert result["unmatched_loads"] == [0]
+        assert result["unmatched_drivers"] == [0]
+
+    def test_unreachable_road_route_is_not_replaced_by_haversine_fallback(self, monkeypatch):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"durations": [[None]]}
+
+        monkeypatch.setenv("TRUXIFY_ML_USE_OSRM", "true")
+        monkeypatch.setattr(
+            "app.models.bilateral_matcher.requests.get",
+            lambda *args, **kwargs: FakeResponse(),
+        )
+        load = make_load(deadline_hours=24)
         driver = make_driver(current_lat=12.0, current_lng=77.0)
         result = match_bilateral([load], [driver])
         assert result["assignments"] == []
