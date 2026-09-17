@@ -67,6 +67,7 @@ Content-Type: application/json
 - If `VALID_API_KEYS` is not configured, the middleware returns `503 Service Unavailable` (fail closed — no internal endpoints are exposed unauthenticated).
 - If the presented key is missing or not in the allowed list, the middleware returns `401 Unauthorized` and records a Sentry warning with the source IP and path.
 - If the key matches, the request proceeds.
+- Escrow pause and unpause operations additionally require a key from `ESCROW_OPERATOR_API_KEYS`; a valid reader or workflow key cannot reopen escrow.
 
 ---
 
