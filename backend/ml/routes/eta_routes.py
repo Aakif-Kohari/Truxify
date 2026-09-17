@@ -217,8 +217,12 @@ async def update_eta(order_id: str, request: ETAUpdateRequest, _auth=Depends(ver
     if not _order_is_assigned(order_id):
         raise HTTPException(status_code=404, detail="Order not found or not assigned to a driver")
 
+    order_route = _get_order_route(order_id)
+    if order_route is None:
+        raise HTTPException(status_code=404, detail="Order route coordinates unavailable")
+
     current_location = {'lat': request.current_lat, 'lng': request.current_lng}
-    destination = {'lat': request.dest_lat, 'lng': request.dest_lng}
+    destination = {'lat': order_route['dest_lat'], 'lng': order_route['dest_lng']}
 
     result = await traffic_pipeline.update_eta_realtime(
         order_id,
