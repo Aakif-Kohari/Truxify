@@ -1,8 +1,8 @@
 """Bin Packing & Route Sequencing – packs shipments into a truck and orders stops.
 
 Packing uses a **First-Fit Decreasing** (by volume) shelf-based placement
-strategy.  Delivery-stop ordering uses a **nearest-neighbour greedy** heuristic
-starting from the first delivery address.
+strategy. Delivery-stop ordering uses a **nearest-neighbour greedy** heuristic
+starting from the supplied route start location.
 
 This module is purely algorithmic – no ML model or training is required.
 """
@@ -30,6 +30,19 @@ def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
     )
     return 2 * _EARTH_RADIUS_KM * math.asin(math.sqrt(a))
+
+
+def _validate_route_start(route_start: Dict[str, Any]) -> None:
+    """Validate the route start coordinates before route sequencing."""
+    if not isinstance(route_start, dict):
+        raise ValueError("route_start must be a mapping with lat and lng")
+
+    lat = route_start.get("lat")
+    lng = route_start.get("lng")
+    if not isinstance(lat, (int, float)) or not math.isfinite(lat) or not -90 <= lat <= 90:
+        raise ValueError("route_start.lat must be a finite value between -90 and 90")
+    if not isinstance(lng, (int, float)) or not math.isfinite(lng) or not -180 <= lng <= 180:
+        raise ValueError("route_start.lng must be a finite value between -180 and 180")
 
 
 # ---------------------------------------------------------------------------
@@ -60,8 +73,6 @@ class _Shelf:
         max_height_limit: float | None = None,
     ) -> dict | None:
         """Attempt to place an item; return position dict or *None*."""
-        # Try all six axis-aligned orientations so any package dimension can
-        # occupy the truck's length, width, or vertical axis.
         orientations = [
             (False, length, width, height),
             (True, width, length, height),
@@ -84,21 +95,13 @@ class _Shelf:
         rotated: bool,
         max_height_limit: float | None = None,
     ) -> dict | None:
-        # Determine effective vertical clearance. If an upper shelf exists above
-        # this shelf, max_height_limit specifies the clearance between this shelf
-        # and the upper shelf's z_bottom. Otherwise, self.max_height (truck ceiling clearance) is used.
         effective_max_height = (
             max_height_limit if max_height_limit is not None else self.max_height
         )
 
-        # An item taller than the shelf's remaining vertical clearance can
-        # never be placed here. Furthermore, if expanding self.shelf_height to fit
-        # this item would exceed effective_max_height, reject placement to prevent
-        # lower shelves from expanding vertically past upper shelves.
         if h > effective_max_height or max(self.shelf_height, h) > effective_max_height:
             return None
 
-        # Does it fit in the remaining row?
         if self.cursor_x + l <= self.max_length and self.cursor_y + w <= self.max_width:
             pos = {"x": self.cursor_x, "y": self.cursor_y, "z": self.z_bottom}
             self.cursor_x += l
@@ -107,7 +110,6 @@ class _Shelf:
             self.items.append({"pos": pos, "rotated": rotated})
             return {**pos, "rotated": rotated}
 
-        # Start a new row inside the same shelf
         new_y = self.cursor_y + self.row_height
         if new_y + w <= self.max_width and l <= self.max_length:
             self.cursor_x = l
@@ -143,7 +145,6 @@ def _pack_packages(
             0.0,
         )
 
-    # Sort by volume descending (First-Fit Decreasing)
     indexed = [(i, p) for i, p in enumerate(packages)]
     indexed.sort(key=lambda t: t[1]["length"] * t[1]["width"] * t[1]["height"], reverse=True)
 
@@ -157,7 +158,6 @@ def _pack_packages(
         pkg_length, pkg_width, pkg_height = pkg["length"], pkg["width"], pkg["height"]
         pkg_weight = pkg["weight"]
 
-        # Weight check
         if packed_weight + pkg_weight > max_weight:
             arrangements[idx] = {
                 "package_index": idx,
@@ -170,8 +170,6 @@ def _pack_packages(
 
         placed = False
         for i, shelf in enumerate(shelves):
-            # Compute maximum vertical clearance available for shelf i to prevent
-            # lower shelves from expanding past upper shelves' z_bottom boundaries.
             if i + 1 < len(shelves):
                 clearance = shelves[i + 1].z_bottom - shelf.z_bottom
             else:
@@ -191,9 +189,6 @@ def _pack_packages(
                 break
 
         if not placed:
-            # Open a new shelf and let try_place choose the actual orientation.
-            # The original package height cannot be used as a pre-check because
-            # another axis may legally become the shelf's vertical dimension.
             z_offset = sum(s.shelf_height for s in shelves)
             if z_offset >= truck_h:
                 arrangements[idx] = {
@@ -235,41 +230,41 @@ def _pack_packages(
 # ---------------------------------------------------------------------------
 
 
-def _sequence_stops(delivery_addresses: List[Dict[str, float]], packed_indices: List[int]) -> List[int]:
-    """Order *packed* delivery stops using nearest-neighbour from the first address.
-
-    Parameters
-    ----------
-    delivery_addresses : list[dict]
-        Each dict has ``lat`` and ``lng``, indexed parallel to packages.
-    packed_indices : list[int]
-        Indices of packages that were actually packed.
-
-    Returns
-    -------
-    list[int]
-        Package indices in optimised delivery order.
-    """
+def _sequence_stops(
+    delivery_addresses: List[Dict[str, float]],
+    packed_indices: List[int],
+    route_start: Dict[str, float],
+) -> List[int]:
+    """Order packed delivery stops using nearest-neighbour from the route start."""
     if not packed_indices:
         return []
 
+    _validate_route_start(route_start)
+    if any(index < 0 or index >= len(delivery_addresses) for index in packed_indices):
+        raise ValueError("packed_indices contains an address index outside delivery_addresses")
+
+    current_lat = route_start["lat"]
+    current_lng = route_start["lng"]
     remaining = set(packed_indices)
-    # Start from the first packed package's address
-    current_idx = packed_indices[0]
-    sequence = [current_idx]
-    remaining.discard(current_idx)
+    sequence: List[int] = []
 
     while remaining:
-        cur = delivery_addresses[current_idx]
         nearest = min(
             remaining,
-            key=lambda i: _haversine(cur["lat"], cur["lng"],
-                                     delivery_addresses[i]["lat"],
-                                     delivery_addresses[i]["lng"]),
+            key=lambda i: (
+                _haversine(
+                    current_lat,
+                    current_lng,
+                    delivery_addresses[i]["lat"],
+                    delivery_addresses[i]["lng"],
+                ),
+                i,
+            ),
         )
         sequence.append(nearest)
-        remaining.discard(nearest)
-        current_idx = nearest
+        remaining.remove(nearest)
+        current_lat = delivery_addresses[nearest]["lat"]
+        current_lng = delivery_addresses[nearest]["lng"]
 
     return sequence
 
@@ -283,8 +278,9 @@ def optimise_packing(
     packages: List[Dict[str, Any]],
     truck: Dict[str, Any],
     delivery_addresses: List[Dict[str, Any]],
+    route_start: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Pack shipments into a truck and determine delivery stop order.
+    """Pack shipments into a truck and determine delivery stop order from a depot.
 
     Parameters
     ----------
@@ -294,6 +290,8 @@ def optimise_packing(
         ``length``, ``width``, ``height``, ``max_weight`` (floats).
     delivery_addresses : list[dict]
         ``lat``, ``lng`` for each package (same index correspondence).
+    route_start : dict
+        ``lat``, ``lng`` for the truck's current route/depot start.
 
     Returns
     -------
@@ -303,7 +301,8 @@ def optimise_packing(
         ``stop_sequence``       – ordered package indices for delivery.
         ``utilization_pct``     – volume utilisation %.
     """
-    # Edge cases
+    _validate_route_start(route_start)
+
     if not packages:
         return {
             "packing_arrangement": [],
@@ -329,7 +328,7 @@ def optimise_packing(
     arrangements, unpacked, utilization = _pack_packages(packages, truck)
 
     packed_indices = [a["package_index"] for a in arrangements if a["fits"]]
-    stop_sequence = _sequence_stops(delivery_addresses, packed_indices)
+    stop_sequence = _sequence_stops(delivery_addresses, packed_indices, route_start)
 
     logger.info(
         "Packing complete: %d packed, %d unpacked, %.1f%% utilisation",
