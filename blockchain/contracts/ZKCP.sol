@@ -90,7 +90,8 @@ contract ZKCP is Ownable {
         bytes32 _dataHashCommitment,
         uint256 _refundDuration
     ) external payable {
-        if (msg.value == 0) revert InvalidLockedValue();
+     if (msg.value == 0) revert InvalidLockedValue();
+        if (_dataHashCommitment == bytes32(0)) revert CommitmentMismatch();
         if (agreements[_agreementId].buyer != address(0)) revert AgreementAlreadyExists(_agreementId);
 
         uint256 timelockExpiry = block.timestamp + _refundDuration;

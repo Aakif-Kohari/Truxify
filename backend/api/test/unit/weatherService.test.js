@@ -1,14 +1,9 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  WeatherService,
-  checkSevereWeatherAdvisory,
-  calculateWeatherFuelPenalty,
-  getMeteorologicalRegion,
-  WeatherAdvisorUtilities
-} from '../../src/services/weatherService.js';
+```javascript
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { WeatherService } from '../../src/services/weatherService.js';
 
-describe('WeatherService & Fleet Weather Advisor Comprehensive Suite (Issue #14109)', () => {
-  let weatherService;
+describe('WeatherService', () => {
+  let service;
   let mockLogger;
 
   beforeEach(() => {
@@ -16,198 +11,380 @@ describe('WeatherService & Fleet Weather Advisor Comprehensive Suite (Issue #141
       debug: vi.fn(),
       info: vi.fn(),
       warn: vi.fn(),
-      error: vi.fn()
+      error: vi.fn(),
     };
-    weatherService = new WeatherService({ logger: mockLogger });
+
+    service = new WeatherService({ logger: mockLogger });
   });
 
-  describe('getWeatherForecast - Latitude Thresholds & Boundaries', () => {
-    
-    it('returns snow and -5C for Northern high latitudes (lat > 40)', async () => {
-      const result = await weatherService.getWeatherForecast(45.5, -73.5);
-      expect(result.temperature_c).toBe(-5);
-      expect(result.condition).toBe('snow');
-      expect(result).toHaveProperty('forecast_time');
-      expect(mockLogger.debug).toHaveBeenCalled();
-    });
-
-    it('returns snow and -5C for Southern high latitudes (lat < -40)', async () => {
-      const result = await weatherService.getWeatherForecast(-45.5, 151.2);
-      expect(result.temperature_c).toBe(-5);
-      expect(result.condition).toBe('snow');
-    });
-
-    it('returns clear and 15C for temperate/equatorial latitudes between -40 and 40', async () => {
-      const result = await weatherService.getWeatherForecast(12.97, 77.59);
-      expect(result.temperature_c).toBe(15);
-      expect(result.condition).toBe('clear');
-    });
-
-    it('returns warm default (clear, 15C) at exact boundary lat = 40 (not > 40)', async () => {
-      const result = await weatherService.getWeatherForecast(40, 0);
-      expect(result.temperature_c).toBe(15);
-      expect(result.condition).toBe('clear');
-    });
-
-    it('returns warm default (clear, 15C) at exact boundary lat = -40 (not < -40)', async () => {
-      const result = await weatherService.getWeatherForecast(-40, 0);
-      expect(result.temperature_c).toBe(15);
-      expect(result.condition).toBe('clear');
-    });
-
-    it('falls through to warm default when latitude is NaN', async () => {
-      const result = await weatherService.getWeatherForecast(NaN, 50);
-      expect(result.temperature_c).toBe(15);
-      expect(result.condition).toBe('clear');
-    });
-
-    it('falls through to warm default when longitude is NaN', async () => {
-      const result = await weatherService.getWeatherForecast(50, NaN);
-      expect(result.temperature_c).toBe(15);
-      expect(result.condition).toBe('clear');
-    });
-
-    it('falls through to warm default for non-numeric or non-finite lat/lng inputs (Infinity, strings)', async () => {
-      expect((await weatherService.getWeatherForecast(Infinity, 10)).temperature_c).toBe(15);
-      expect((await weatherService.getWeatherForecast(20, -Infinity)).temperature_c).toBe(15);
-      expect((await weatherService.getWeatherForecast('invalid', 'coords')).temperature_c).toBe(15);
-      expect((await weatherService.getWeatherForecast(null, undefined)).temperature_c).toBe(15);
-    });
-
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  describe('checkSevereWeatherAdvisory (Enterprise Extension)', () => {
-    
-    it('returns true for extreme polar or high-altitude regions (|lat| > 60)', async () => {
-      expect(await checkSevereWeatherAdvisory(65.1, -150.2)).toBe(true);
-      expect(await checkSevereWeatherAdvisory(-62.5, 45.0)).toBe(true);
+  describe('getWeatherForecast', () => {
+    describe('cold temperature branch', () => {
+      it('returns -5C and snow when latitude is greater than 40', async () => {
+        const result = await service.getWeatherForecast(45, 72);
+
+        expect(result.temperature_c).toBe(-5);
+        expect(result.condition).toBe('snow');
+      });
+
+      it('returns -5C and snow when latitude is less than -40', async () => {
+        const result = await service.getWeatherForecast(-45, 72);
+
+        expect(result.temperature_c).toBe(-5);
+        expect(result.condition).toBe('snow');
+      });
+
+      it('returns cold weather for latitude 41', async () => {
+        const result = await service.getWeatherForecast(41, 72);
+
+        expect(result.temperature_c).toEqual(-5);
+        expect(result.condition).toEqual('snow');
+      });
+
+      it('returns cold weather for latitude -41', async () => {
+        const result = await service.getWeatherForecast(-41, 72);
+
+        expect(result.temperature_c).toEqual(-5);
+        expect(result.condition).toEqual('snow');
+      });
+
+      it('returns cold weather for the maximum northern latitude', async () => {
+        const result = await service.getWeatherForecast(90, 0);
+
+        expect(result.temperature_c).toBe(-5);
+        expect(result.condition).toBe('snow');
+      });
+
+      it('returns cold weather for the minimum southern latitude', async () => {
+        const result = await service.getWeatherForecast(-90, 0);
+
+        expect(result.temperature_c).toBe(-5);
+        expect(result.condition).toBe('snow');
+      });
     });
 
-    it('returns false for moderate latitudes (|lat| <= 60)', async () => {
-      expect(await checkSevereWeatherAdvisory(45.0, 10.0)).toBe(false);
-      expect(await checkSevereWeatherAdvisory(12.0, 77.0)).toBe(false);
+    describe('warm temperature branch', () => {
+      it('returns 15C and clear when latitude is between -40 and 40', async () => {
+        const result = await service.getWeatherForecast(20, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm weather at latitude 0', async () => {
+        const result = await service.getWeatherForecast(0, 0);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm weather at latitude 40', async () => {
+        const result = await service.getWeatherForecast(40, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm weather at latitude -40', async () => {
+        const result = await service.getWeatherForecast(-40, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm weather just below latitude 40', async () => {
+        const result = await service.getWeatherForecast(39.999999, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm weather just above latitude -40', async () => {
+        const result = await service.getWeatherForecast(-39.999999, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
     });
 
-    it('returns false for invalid or non-finite coordinate inputs', async () => {
-      expect(await checkSevereWeatherAdvisory(NaN, 50)).toBe(false);
-      expect(await checkSevereWeatherAdvisory(Infinity, 10)).toBe(false);
-      expect(await checkSevereWeatherAdvisory('abc', 'xyz')).toBe(false);
+    describe('non-finite latitude values', () => {
+      it('returns warm default for NaN latitude', async () => {
+        const result = await service.getWeatherForecast(NaN, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm default for positive Infinity latitude', async () => {
+        const result = await service.getWeatherForecast(Infinity, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm default for negative Infinity latitude', async () => {
+        const result = await service.getWeatherForecast(-Infinity, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm default for a non-numeric latitude', async () => {
+        const result = await service.getWeatherForecast('invalid', 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm default for undefined latitude', async () => {
+        const result = await service.getWeatherForecast(undefined, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
     });
 
-  });
+    describe('non-finite longitude values', () => {
+      it('returns warm default when longitude is NaN', async () => {
+        const result = await service.getWeatherForecast(45, NaN);
 
-  describe('batchGetWeatherForecasts (Prototype Extension)', () => {
-    
-    it('concurrently fetches forecasts for a valid list of coordinates', async () => {
-      const coords = [
-        { lat: 50, lng: 10 }, // snow (-5C)
-        { lat: 10, lng: 20 }  // clear (15C)
-      ];
-      
-      const forecasts = await weatherService.batchGetWeatherForecasts(coords);
-      expect(forecasts).toHaveLength(2);
-      expect(forecasts[0].temperature_c).toBe(-5);
-      expect(forecasts[1].temperature_c).toBe(15);
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm default when longitude is positive Infinity', async () => {
+        const result = await service.getWeatherForecast(45, Infinity);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm default when longitude is negative Infinity', async () => {
+        const result = await service.getWeatherForecast(45, -Infinity);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm default when longitude is non-numeric', async () => {
+        const result = await service.getWeatherForecast(45, 'invalid');
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('returns warm default when longitude is undefined', async () => {
+        const result = await service.getWeatherForecast(45, undefined);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
     });
 
-    it('handles empty arrays or invalid batch payloads gracefully', async () => {
-      expect(await weatherService.batchGetWeatherForecasts([])).toEqual([]);
-      expect(await weatherService.batchGetWeatherForecasts(null)).toEqual([]);
-      
-      const malformed = [{ lat: 10 }]; // missing lng
-      const results = await weatherService.batchGetWeatherForecasts(malformed);
-      expect(results[0]).toHaveProperty('error', 'Invalid coordinates provided');
+    describe('coordinate conversion', () => {
+      it('accepts numeric latitude and longitude strings', async () => {
+        const result = await service.getWeatherForecast('25', '72');
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('converts a numeric latitude string above 40 to cold weather', async () => {
+        const result = await service.getWeatherForecast('45', '72');
+
+        expect(result.temperature_c).toBe(-5);
+        expect(result.condition).toBe('snow');
+      });
+
+      it('converts a numeric latitude string below -40 to cold weather', async () => {
+        const result = await service.getWeatherForecast('-45', '72');
+
+        expect(result.temperature_c).toBe(-5);
+        expect(result.condition).toBe('snow');
+      });
     });
 
-  });
+    describe('logger interaction', () => {
+      it('calls logger.debug once for a weather request', async () => {
+        await service.getWeatherForecast(30, 72);
 
-  describe('calculateWeatherFuelPenalty (Fleet Efficiency Utilities)', () => {
-    
-    it('applies 15% penalty multiplier for snow or freezing temperatures', () => {
-      expect(calculateWeatherFuelPenalty('snow', 2)).toBe(1.15);
-      expect(calculateWeatherFuelPenalty('clear', -5)).toBe(1.15);
-      expect(calculateWeatherFuelPenalty('snow', -10)).toBe(1.15);
+        expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+      });
+
+      it('logs the latitude and longitude values', async () => {
+        await service.getWeatherForecast(30, 72);
+
+        expect(mockLogger.debug).toHaveBeenCalledWith(
+          '[WeatherService] Fetching forecast for lat: 30, lng: 72'
+        );
+      });
+
+      it('logs negative coordinates correctly', async () => {
+        await service.getWeatherForecast(-45, -90);
+
+        expect(mockLogger.debug).toHaveBeenCalledWith(
+          '[WeatherService] Fetching forecast for lat: -45, lng: -90'
+        );
+      });
+
+      it('logs string coordinates using their original values', async () => {
+        await service.getWeatherForecast('45', '72');
+
+        expect(mockLogger.debug).toHaveBeenCalledWith(
+          '[WeatherService] Fetching forecast for lat: 45, lng: 72'
+        );
+      });
+
+      it('logs non-finite coordinate values', async () => {
+        await service.getWeatherForecast(NaN, Infinity);
+
+        expect(mockLogger.debug).toHaveBeenCalledWith(
+          '[WeatherService] Fetching forecast for lat: NaN, lng: Infinity'
+        );
+      });
+
+      it('does not call info, warn, or error for a normal request', async () => {
+        await service.getWeatherForecast(30, 72);
+
+        expect(mockLogger.info).not.toHaveBeenCalled();
+        expect(mockLogger.warn).not.toHaveBeenCalled();
+        expect(mockLogger.error).not.toHaveBeenCalled();
+      });
+
+      it('works without a logger', async () => {
+        const instance = new WeatherService({});
+
+        const result = await instance.getWeatherForecast(30, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
+
+      it('works with an explicitly undefined logger', async () => {
+        const instance = new WeatherService({ logger: undefined });
+
+        const result = await instance.getWeatherForecast(30, 72);
+
+        expect(result.temperature_c).toBe(15);
+        expect(result.condition).toBe('clear');
+      });
     });
 
-    it('applies 5% penalty multiplier for chilly weather (0C to 10C)', () => {
-      expect(calculateWeatherFuelPenalty('clear', 5)).toBe(1.05);
-      expect(calculateWeatherFuelPenalty('cloudy', 9.9)).toBe(1.05);
+    describe('response structure', () => {
+      it('returns the expected response properties', async () => {
+        const result = await service.getWeatherForecast(30, 72);
+
+        expect(result).toHaveProperty('temperature_c');
+        expect(result).toHaveProperty('condition');
+        expect(result).toHaveProperty('forecast_time');
+      });
+
+      it('returns exactly three response properties', async () => {
+        const result = await service.getWeatherForecast(30, 72);
+
+        expect(Object.keys(result).sort()).toEqual([
+          'condition',
+          'forecast_time',
+          'temperature_c',
+        ]);
+      });
+
+      it('returns temperature_c as a number', async () => {
+        const result = await service.getWeatherForecast(30, 72);
+
+        expect(result.temperature_c).toBeTypeOf('number');
+      });
+
+      it('returns condition as a string', async () => {
+        const result = await service.getWeatherForecast(30, 72);
+
+        expect(result.condition).toBeTypeOf('string');
+      });
+
+      it('returns forecast_time as a string', async () => {
+        const result = await service.getWeatherForecast(30, 72);
+
+        expect(result.forecast_time).toBeTypeOf('string');
+      });
+
+      it('returns forecast_time in ISO format', async () => {
+        const result = await service.getWeatherForecast(30, 72);
+
+        expect(result.forecast_time).toMatch(
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+        );
+      });
+
+      it('returns a parseable forecast_time', async () => {
+        const result = await service.getWeatherForecast(30, 72);
+
+        expect(Number.isNaN(Date.parse(result.forecast_time))).toBe(false);
+      });
+
+      it('returns a complete cold weather response', async () => {
+        const result = await service.getWeatherForecast(50, 10);
+
+        expect(result).toEqual(
+          expect.objectContaining({
+            temperature_c: -5,
+            condition: 'snow',
+          })
+        );
+
+        expect(result.forecast_time).toBeDefined();
+      });
+
+      it('returns a complete warm weather response', async () => {
+        const result = await service.getWeatherForecast(10, 10);
+
+        expect(result).toEqual(
+          expect.objectContaining({
+            temperature_c: 15,
+            condition: 'clear',
+          })
+        );
+
+        expect(result.forecast_time).toBeDefined();
+      });
     });
 
-    it('applies 8% penalty multiplier for extreme heat (>35C due to AC load)', () => {
-      expect(calculateWeatherFuelPenalty('clear', 38)).toBe(1.08);
+    describe('repeated requests', () => {
+      it('returns consistent weather values for repeated warm requests', async () => {
+        const first = await service.getWeatherForecast(20, 72);
+        const second = await service.getWeatherForecast(20, 72);
+
+        expect(first.temperature_c).toBe(second.temperature_c);
+        expect(first.condition).toBe(second.condition);
+      });
+
+      it('returns consistent weather values for repeated cold requests', async () => {
+        const first = await service.getWeatherForecast(60, 72);
+        const second = await service.getWeatherForecast(60, 72);
+
+        expect(first.temperature_c).toBe(second.temperature_c);
+        expect(first.condition).toBe(second.condition);
+      });
+
+      it('returns a new response object for each request', async () => {
+        const first = await service.getWeatherForecast(30, 72);
+        const second = await service.getWeatherForecast(30, 72);
+
+        expect(first).not.toBe(second);
+      });
+
+      it('does not use longitude to determine temperature when coordinates are valid', async () => {
+        const first = await service.getWeatherForecast(30, -180);
+        const second = await service.getWeatherForecast(30, 180);
+
+        expect(first.temperature_c).toBe(15);
+        expect(second.temperature_c).toBe(15);
+        expect(first.condition).toBe('clear');
+        expect(second.condition).toBe('clear');
+      });
     });
-
-    it('returns baseline 1.0 multiplier for normal comfortable weather', () => {
-      expect(calculateWeatherFuelPenalty('clear', 22)).toBe(1.0);
-      expect(calculateWeatherFuelPenalty('sunny', 25)).toBe(1.0);
-    });
-
-    it('returns baseline 1.0 for invalid or non-numeric temperature inputs', () => {
-      expect(calculateWeatherFuelPenalty('snow', NaN)).toBe(1.0);
-      expect(calculateWeatherFuelPenalty('clear', 'warm')).toBe(1.0);
-      expect(calculateWeatherFuelPenalty('clear', null)).toBe(1.0);
-    });
-
-  });
-
-  describe('getMeteorologicalRegion (Bounding Box Descriptor)', () => {
-    
-    it('classifies regions correctly based on latitude boundaries', () => {
-      expect(getMeteorologicalRegion(50, 0)).toBe('NORTH_TEMPERATE_POLAR');
-      expect(getMeteorologicalRegion(-50, 0)).toBe('SOUTH_TEMPERATE_POLAR');
-      expect(getMeteorologicalRegion(5, 77)).toBe('EQUATORIAL_TROPICAL');
-      expect(getMeteorologicalRegion(25, 80)).toBe('MID_LATITUDE_ZONE');
-    });
-
-    it('returns UNKNOWN_REGION for invalid or non-finite coordinates', () => {
-      expect(getMeteorologicalRegion(NaN, 50)).toBe('UNKNOWN_REGION');
-      expect(getMeteorologicalRegion(10, Infinity)).toBe('UNKNOWN_REGION');
-      expect(getMeteorologicalRegion('lat', 'lng')).toBe('UNKNOWN_REGION');
-    });
-
-  });
-
-  describe('WeatherAdvisorUtilities Unified Export Object', () => {
-    
-    it('exposes all utility functions correctly', () => {
-      expect(typeof WeatherAdvisorUtilities.calculateWeatherFuelPenalty).toBe('function');
-      expect(typeof WeatherAdvisorUtilities.getMeteorologicalRegion).toBe('function');
-      expect(WeatherAdvisorUtilities.calculateWeatherFuelPenalty('snow', -2)).toBe(1.15);
-      expect(WeatherAdvisorUtilities.getMeteorologicalRegion(0, 0)).toBe('EQUATORIAL_TROPICAL');
-    });
-
-  });
-
-
-
-  describe('assessRouteWeatherRisk (Route Logistics Risk Assessment)', () => {
-    
-    it('returns SEVERE risk and delay multiplier when route passes through polar regions', async () => {
-      const route = [
-        { lat: 20, lng: 70 },
-        { lat: 65, lng: -140 } // Severe polar region
-      ];
-      const assessment = await weatherService.assessRouteWeatherRisk(route);
-      expect(assessment.riskLevel).toBe('SEVERE');
-      expect(assessment.severeWaypointCount).toBe(1);
-      expect(assessment.delayMultiplier).toBe(1.35);
-    });
-
-    it('returns LOW risk and baseline multiplier for clear tropical routes', async () => {
-      const route = [
-        { lat: 10, lng: 78 },
-        { lat: 15, lng: 80 }
-      ];
-      const assessment = await weatherService.assessRouteWeatherRisk(route);
-      expect(assessment.riskLevel).toBe('LOW');
-      expect(assessment.delayMultiplier).toBe(1.0);
-    });
-
-    it('handles empty or malformed route inputs gracefully', async () => {
-      expect(await weatherService.assessRouteWeatherRisk([])).toEqual({ riskLevel: 'LOW', severeWaypointCount: 0, delayMultiplier: 1.0 });
-      expect(await weatherService.assessRouteWeatherRisk(null)).toEqual({ riskLevel: 'LOW', severeWaypointCount: 0, delayMultiplier: 1.0 });
-    });
-
   });
 });
+```

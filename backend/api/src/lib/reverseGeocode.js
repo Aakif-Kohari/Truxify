@@ -10,11 +10,18 @@ const MAX_RETRY_AFTER_MS = 60000;
  * Returns the Nominatim HTTP timeout in milliseconds.
  * Reads NOMINATIM_TIMEOUT_MS from environment or falls back to NOMINATIM_TIMEOUT_MS constant.
  *
+ * @param {number|string|null|undefined} [timeout=process.env.NOMINATIM_TIMEOUT_MS] - Optional timeout value
  * @returns {number} Timeout in milliseconds (minimum 1)
  */
-export function getTimeoutMs() {
-  const configured = Number(process.env.NOMINATIM_TIMEOUT_MS);
-  return Number.isFinite(configured) && configured > 0 ? configured : NOMINATIM_TIMEOUT_MS;
+export function getTimeoutMs(timeout = process.env.NOMINATIM_TIMEOUT_MS) {
+  if (timeout == null) {
+    return NOMINATIM_TIMEOUT_MS;
+  }
+  const configured = Number(timeout);
+  if (Number.isNaN(configured) || !Number.isFinite(configured) || configured <= 0) {
+    return NOMINATIM_TIMEOUT_MS;
+  }
+  return configured;
 }
 
 /**
