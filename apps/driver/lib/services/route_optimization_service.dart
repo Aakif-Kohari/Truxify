@@ -2,6 +2,8 @@ import 'dart:math';
 import '../models/route_stop_model.dart';
 
 class RouteOptimizationService {
+  static const double _simulatedAverageSpeedKmh = 40.0;
+
   /// Simulates an AI-powered Traveling Salesperson Problem (TSP) optimization
   /// incorporating time windows and simulated traffic constraints.
   Future<List<RouteStop>> optimizeRoute(List<RouteStop> currentStops, double currentLat, double currentLon) async {
@@ -51,6 +53,8 @@ class RouteOptimizationService {
       referenceLon = nearest.longitude;
     }
 
+    _validateDeliveryWindows(optimizedList, currentLat, currentLon);
+
     // Mark as optimized
     return optimizedList.map((stop) => RouteStop(
       id: stop.id,
@@ -61,6 +65,53 @@ class RouteOptimizationService {
       deliveryWindowEnd: stop.deliveryWindowEnd,
       isOptimized: true,
     )).toList();
+  }
+
+  void _validateDeliveryWindows(List<RouteStop> stops, double currentLat, double currentLon) {
+    if (stops.isEmpty) return;
+
+    DateTime currentTime = stops.first.deliveryWindowStart;
+    for (final stop in stops.skip(1)) {
+      if (stop.deliveryWindowStart.isBefore(currentTime)) {
+        currentTime = stop.deliveryWindowStart;
+      }
+    }
+
+    double previousLat = currentLat;
+    double previousLon = currentLon;
+
+    for (final stop in stops) {
+      if (stop.deliveryWindowEnd.isBefore(stop.deliveryWindowStart)) {
+        throw StateError(
+          'Delivery window for stop ${stop.id} ends before it starts',
+        );
+      }
+
+      final distanceKm = _calculateDistance(
+        previousLat,
+        previousLon,
+        stop.latitude,
+        stop.longitude,
+      );
+      final travelHours = distanceKm / _simulatedAverageSpeedKmh;
+      final travelDuration = Duration(
+        milliseconds: (travelHours * Duration.millisecondsPerHour).round(),
+      );
+      final arrivalTime = currentTime.add(travelDuration);
+      final serviceStart = arrivalTime.isBefore(stop.deliveryWindowStart)
+          ? stop.deliveryWindowStart
+          : arrivalTime;
+
+      if (serviceStart.isAfter(stop.deliveryWindowEnd)) {
+        throw StateError(
+          'Stop ${stop.id} cannot be reached within its delivery window',
+        );
+      }
+
+      currentTime = serviceStart;
+      previousLat = stop.latitude;
+      previousLon = stop.longitude;
+    }
   }
 
   // Haversine formula to calculate distance between coordinates
