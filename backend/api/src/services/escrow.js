@@ -99,15 +99,15 @@ if (rpcUrl && contractAddress && relayerPrivateKey) {
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     relayerWallet = new ethers.Wallet(relayerPrivateKey, provider);
     escrowContract = new ethers.Contract(contractAddress, ESCROW_ABI, relayerWallet);
-    logger.info('✅ Polygon Escrow contract client initialised.');
-    logger.info(`📊 Escrow rate: ${ESCROW_MATIC_PER_PAISA} MATIC/paisa → max deposit: ${MAX_ESCROW_MATIC} MATIC`);
+    logger.info('Polygon Escrow contract client initialised.');
+    logger.info(`Escrow rate: ${ESCROW_MATIC_PER_PAISA} MATIC/paisa → max deposit: ${MAX_ESCROW_MATIC} MATIC`);
   } catch (err) {
     logger.error({ event: 'ESCROW_INIT_ERROR', error: err && err.message }, 'Failed to initialise Escrow contract client')
     Sentry.captureException(err)
   }
 } else {
   logger.warn(
-    '⚠️  POLYGON_RPC_URL / ESCROW_CONTRACT_ADDRESS / RELAYER_WALLET_PRIVATE_KEY ' +
+    'POLYGON_RPC_URL / ESCROW_CONTRACT_ADDRESS / RELAYER_WALLET_PRIVATE_KEY ' +
     'not set. Escrow payments disabled.'
   )
 }
@@ -141,13 +141,13 @@ export async function validateEscrowSetup () {
     const code = await provider.getCode(address)
     if (code === '0x') {
       logger.error(
-        `[escrow] ❌ No contract deployed at ${address}. ` +
+        `[escrow] No contract deployed at ${address}. ` +
         'Check ESCROW_CONTRACT_ADDRESS in your .env.'
       )
       escrowContract = null
       return false
     }
-    logger.info(`[escrow] ✅ Bytecode confirmed at ${address} (${(code.length - 2) / 2} bytes).`)
+    logger.info(`[escrow] Bytecode confirmed at ${address} (${(code.length - 2) / 2} bytes).`)
   } catch (err) {
     logger.error({ event: 'ESCROW_BYTECODE_QUERY_ERROR', address, error: err && err.message }, `[escrow] Failed to query bytecode at ${address}`)
     escrowContract = null
@@ -160,10 +160,10 @@ export async function validateEscrowSetup () {
   try {
     const probeContract = new ethers.Contract(address, ESCROW_ABI, provider)
     await probeContract.bookings(0)
-    logger.info('[escrow] ✅ Contract ABI verified — read-only eth_call succeeded.')
+    logger.info('[escrow] Contract ABI verified — read-only eth_call succeeded.')
   } catch (err) {
     logger.error(
-      `[escrow] ❌ Contract at ${address} does not respond to 'bookings(uint256)'. ` +
+      `[escrow] Contract at ${address} does not respond to 'bookings(uint256)'. ` +
       'This likely means it is NOT TruxifyEscrow.sol. ' +
       'Check that ESCROW_CONTRACT_ADDRESS points to the active TruxifyEscrow contract, ' +
       'not the deprecated Escrow.sol.'
