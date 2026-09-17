@@ -357,7 +357,15 @@ router.post("/verify-otp", otpVerificationLimiter, async (req, res) => {
   }
 });
 
+// Development-only fallback: this literal is public, so it must never protect
+// a production deployment. validateConfig() refuses to boot production without
+// JWT_SECRET (see config/db.js); this warning covers non-production runtimes.
 const JWT_SECRET = process.env.JWT_SECRET || 'truxify-jwt-secret-key';
+if (!process.env.JWT_SECRET) {
+  logger.warn(
+    '[auth/verify] JWT_SECRET is not set. Falling back to the built-in development secret — never use this in production.',
+  );
+}
 
 /**
  * @openapi

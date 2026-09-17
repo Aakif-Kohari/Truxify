@@ -14,6 +14,17 @@ import {
 } from "../lib/profileCache.js";
 import logger from "./logger.js";
 
+// Development-only fallback. This value is public (it is committed to an
+// open-source repo), so it must never protect a production deployment.
+// validateConfig() refuses to boot a production process without JWT_SECRET;
+// this warning makes the fallback obvious everywhere else.
+const DEFAULT_DEV_JWT_SECRET = "truxify-jwt-secret-key";
+if (!process.env.JWT_SECRET) {
+  logger.warn(
+    "[auth] JWT_SECRET is not set. Falling back to the built-in development secret — never use this in production.",
+  );
+}
+
 /**
  * Verification helper for direct programmatic calls (e.g., WebSockets, gRPC, workers).
  * Uses Redis caching and single-query DB lookup.
@@ -297,7 +308,7 @@ export async function authenticate(req, res, next) {
   const token = authHeader.split(" ")[1];
   req.token = token;
 
-  const secret = process.env.JWT_SECRET || 'truxify-jwt-secret-key';
+  const secret = process.env.JWT_SECRET || DEFAULT_DEV_JWT_SECRET;
   try {
     const verified = jwt.verify(token, secret);
     if (verified && (verified.id || verified.uid)) {
@@ -310,7 +321,16 @@ export async function authenticate(req, res, next) {
       };
       return next();
     }
-  } catch (_) {}
+  } catch (err) {
+    // Expected for identity-provider tokens (Supabase/Firebase also issue
+    // JWTs): they are not signed with our local secret. Log at debug so a
+    // genuinely tampered/expired local token is still diagnosable without
+    // flooding logs on every ID-token request.
+    logger.debug(
+      { err: err?.message },
+      "[auth] Local JWT verification failed; attempting identity-provider token",
+    );
+  }
 
   try {
     let decoded;
