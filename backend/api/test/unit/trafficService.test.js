@@ -111,7 +111,7 @@ describe('TrafficService Enterprise Test Suite (Issue #14108)', () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          flowSegmentData: { speedDiffPercent: 25 } // 25% speed drop
+          flowSegmentData: { speedDiffPercent: -25 } // 25% speed drop (negative speed diff)
         })
       });
 
@@ -128,7 +128,7 @@ describe('TrafficService Enterprise Test Suite (Issue #14108)', () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          flowSegmentData: { speedDiffPercent: 300 } // Extreme drop
+          flowSegmentData: { speedDiffPercent: -300 } // Extreme drop
         })
       });
 
@@ -186,7 +186,7 @@ describe('TrafficService Enterprise Test Suite (Issue #14108)', () => {
       expect(result).toBe(1.0);
     });
 
-it('falls back to heuristic when Google API throws network exception', async () => {
+    it('falls back to heuristic when Google API throws network exception', async () => {
       global.fetch.mockRejectedValueOnce(new Error('ECONNRESET'));
       
       const result = await trafficService.getLiveTrafficMultiplier(28.7, 77.1);
@@ -202,12 +202,14 @@ it('falls back to heuristic when Google API throws network exception', async () 
       });
       global.fetch = mockFetch;
     });
+  });
 
   describe('Rush-Hour Heuristic (Fallback & Boundaries)', () => {
-    // Utility to mock system time to a specific UTC hour
-    const setMockUTCHour = (hour, minute = 0) => {
-      const d = new Date();
-      d.setUTCHours(hour, minute, 0, 0);
+    // Utility to mock system time to a specific IST hour
+    const setMockISTHour = (hour, minute = 0) => {
+      const d = new Date('2026-06-15T00:00:00.000Z');
+      const totalMinutes = hour * 60 + minute - 330;
+      d.setUTCHours(Math.floor(totalMinutes / 60), ((totalMinutes % 60) + 60) % 60, 0, 0);
       vi.setSystemTime(d);
     };
 
@@ -215,48 +217,48 @@ it('falls back to heuristic when Google API throws network exception', async () 
       vi.useFakeTimers();
     });
 
-    it('returns baseline 1.0 during off-peak night hours (e.g., 3:00 AM UTC)', () => {
-      setMockUTCHour(3);
+    it('returns baseline 1.0 during off-peak night hours (e.g., 3:00 AM IST)', () => {
+      setMockISTHour(3);
       const mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(1.0);
     });
 
-    it('returns baseline 1.0 during off-peak mid-day hours (e.g., 12:00 PM UTC)', () => {
-      setMockUTCHour(12);
+    it('returns baseline 1.0 during off-peak mid-day hours (e.g., 12:00 PM IST)', () => {
+      setMockISTHour(12);
       const mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(1.0);
     });
 
-    it('returns baseline 1.0 during off-peak late evening hours (e.g., 22:00 UTC)', () => {
-      setMockUTCHour(22);
+    it('returns baseline 1.0 during off-peak late evening hours (e.g., 22:00 IST)', () => {
+      setMockISTHour(22);
       const mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(1.0);
     });
 
-    it('applies scaling surge during Morning Rush boundary (7:00 AM - 10:00 AM UTC)', () => {
-      setMockUTCHour(7, 1); // Hour 7 -> peakHour = 0 -> surge = 1.2
+    it('applies scaling surge during Morning Rush boundary (7:00 AM - 10:00 AM IST)', () => {
+      setMockISTHour(7, 1); // Hour 7 -> peakHour = 0 -> surge = 1.2
       let mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(1.2);
 
-      setMockUTCHour(8, 30); // Hour 8 -> peakHour = 0.33 -> surge = 1.2 + 1.3*sin(60deg) = 2.33
+      setMockISTHour(8, 30); // Hour 8 -> peakHour = 0.33 -> surge = 1.2 + 1.3*sin(60deg) = 2.33
       mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(2.33);
 
-      setMockUTCHour(9, 59); // Hour 9 -> peakHour = 0.66 -> surge = 2.33
+      setMockISTHour(9, 59); // Hour 9 -> peakHour = 0.66 -> surge = 2.33
       mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(2.33);
     });
 
-    it('applies scaling surge during Evening Rush boundary (16:00 - 19:00 UTC)', () => {
-      setMockUTCHour(16, 15); // Hour 16 -> peakHour = 0 -> surge = 1.2
+    it('applies scaling surge during Evening Rush boundary (16:00 - 19:00 IST)', () => {
+      setMockISTHour(16, 15); // Hour 16 -> peakHour = 0 -> surge = 1.2
       let mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(1.2);
 
-      setMockUTCHour(17, 30); // Hour 17 -> peakHour = 0.33 -> surge = 2.33
+      setMockISTHour(17, 30); // Hour 17 -> peakHour = 0.33 -> surge = 2.33
       mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(2.33);
 
-      setMockUTCHour(18, 45); // Hour 18 -> peakHour = 0.66 -> surge = 2.33
+      setMockISTHour(18, 45); // Hour 18 -> peakHour = 0.66 -> surge = 2.33
       mult = trafficService.getRushHourMultiplier(new Date());
       expect(mult).toBe(2.33);
     });
@@ -278,12 +280,6 @@ it('falls back to heuristic when Google API throws network exception', async () 
     });
 
     it('handles deeply nested missing fields in Google Maps API responses', async () => {
-      process.env.GOOGLE_MAPS_API_KEY = 'mock_google_key_corrupt';
-      delete process.env.TOMTOM_API_KEY;
-      
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-it('handles deeply nested missing fields in Google Maps API responses', async () => {
       process.env.GOOGLE_MAPS_API_KEY = 'mock_google_key_corrupt';
       delete process.env.TOMTOM_API_KEY;
       
