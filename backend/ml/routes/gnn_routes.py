@@ -129,6 +129,12 @@ def _multi_objective_optimization(start, end, graph_data, objectives=None, const
 @router.post("/build-graph")
 async def build_graph(nodes: List[Node], edges: List[Edge]):
     """Build road network graph"""
+    if not nodes:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one node is required to build a graph"
+        )
+
     try:
         graph = builder.build_road_network(
             [node.dict() for node in nodes],
