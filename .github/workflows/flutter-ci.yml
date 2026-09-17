@@ -43,4 +43,4 @@ jobs:
         run: cd apps/driver && flutter test
 
       - name: Analyze (no errors)
-        run: flutter analyse apps/ packages/
+        run: flutter analyze apps/ packages/
