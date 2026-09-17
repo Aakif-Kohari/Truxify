@@ -86,6 +86,7 @@ flutter run
 ### 3. Backend API (Node.js & Express)
 
 ```bash
+cd backend/api
 npm install
 npm run lint
 npm test
@@ -158,7 +159,7 @@ Always branch off `main` or the active sprint branch using the following naming 
 - **Features**: `feat/<issue-number>-short-description` (e.g. `feat/472-fcm-notifications`)
 - **Bug Fixes**: `fix/<issue-number>-short-description` (e.g. `fix/312-redis-cache-invalidation`)
 - **Documentation**: `docs/<issue-number>-short-description` (e.g. `docs/501-contributing-guide`)
-- **Refactoring**: `refactor/<issue-number>-short-description` (e.g. `refactor/128-order-lifecycle`)
+- **Refactoring**: `refactor/<issue-number>-short-description` (e.g. `refactor/128-order-optimization`)
 
 ---
 
