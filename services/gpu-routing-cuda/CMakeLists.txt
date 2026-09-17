@@ -45,7 +45,9 @@ else()
     set_source_files_properties(
         src/cuda_vrp.cu
         src/cuda_vrp_tests.cu
-        PROPERTIES LANGUAGE CXX
+        PROPERTIES
+            LANGUAGE CXX
+            COMPILE_OPTIONS "-x;c++"
     )
 endif()
 
