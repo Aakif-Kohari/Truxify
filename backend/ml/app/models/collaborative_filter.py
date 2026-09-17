@@ -228,23 +228,32 @@ class CollaborativeFilter:
         """
         idx = self._user_index(user_id)
 
+        # The exclusion set must be built before the cold-start branch so
+        # popularity fallback never recommends an entity already booked.
+        booked_ids = {b.get(booking_key) for b in booking_history if b.get(booking_key)}
+
         # Cold-start fallback
         if idx is None:
             logger.info(
                 "Cold start for user '%s'; returning popular %ss.", user_id, entity_type,
             )
             recs = []
-            for rank, ei in enumerate(popular[:top_n]):
+            for ei in popular:
+                entity_id = ids[int(ei)]
+                if entity_id in booked_ids:
+                    continue
+                rank = len(recs)
                 recs.append({
-                    f"{entity_type}_id": ids[int(ei)],
+                    f"{entity_type}_id": entity_id,
                     "relevance_score": round(1.0 - rank * 0.05, 4),
                 })
+                if len(recs) >= top_n:
+                    break
             return {"recommendations": recs}
 
         scores = approx[idx]
 
         # Exclude already-booked entities
-        booked_ids = {b.get(booking_key) for b in booking_history if booking_key in b}
         masked_scores = scores.copy()
         for i, eid in enumerate(ids):
             if eid in booked_ids:
