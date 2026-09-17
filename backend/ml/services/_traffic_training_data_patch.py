@@ -21,6 +21,7 @@ async def _ingest_traffic_data_without_synthetic_training_rows(self, route_id, s
             "free_flow_speed",
         }.issubset(osrm_data)
 
+        timestamp = datetime.utcnow()
         traffic_entry = _traffic_pipeline.TrafficData(
             route_id=route_id,
             source_lat=source["lat"],
@@ -30,8 +31,9 @@ async def _ingest_traffic_data_without_synthetic_training_rows(self, route_id, s
             traffic_speed=gmaps_data.get("speed", osrm_data.get("speed", 50)),
             free_flow_speed=osrm_data.get("free_flow_speed", 80),
             congestion_level=gmaps_data.get("congestion", 0.3),
-            day_of_week=datetime.now().weekday(),
-            hour=datetime.now().hour,
+            timestamp=timestamp,
+            day_of_week=timestamp.weekday(),
+            hour=timestamp.hour,
         )
 
         if gmaps_is_live and osrm_is_live:
