@@ -292,6 +292,10 @@ router.post('/defensive-pause', async (req, res) => {
       });
     }
 
+    // Redis was unavailable, so the defensive pause was not persisted. Escrow
+    // submissions are still refused (isEscrowPaused() fails closed while Redis
+    // is unreadable), but the endpoint must still return 503 — answering 2xx
+    // would tell the n8n sentinel the pause succeeded when it did not.
     if (result.persisted === false) {
       logger.error(
         { event: 'DEFENSIVE_PAUSE_NOT_PERSISTED', source: 'security-sentinel', reason, txHash },
