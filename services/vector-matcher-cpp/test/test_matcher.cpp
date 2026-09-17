@@ -1,5 +1,6 @@
 #include "../include/matcher.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <vector>
@@ -40,17 +41,12 @@ static void assert_valid_placement(
 // and must be order-independent: shuffling the same box list yields the same
 // result.
 static void test_order_independent_packable() {
-    // Bed 10x10x10 (volume 1000).
     Box3D bed{ 10.0f, 10.0f, 10.0f };
 
-    // Three boxes that only fit together when each is placed flush against a
-    // different wall / corner. A first-fit that drops them in input order into
-    // the first free corner can leave the last box stranded, but a real
-    // arrangement exists.
     std::vector<Box3D> boxesA{
-        { 6.0f, 4.0f, 10.0f }, // vol 240
-        { 4.0f, 6.0f, 10.0f }, // vol 240
-        { 6.0f, 6.0f, 4.0f },  // vol 144
+        { 6.0f, 4.0f, 10.0f },
+        { 4.0f, 6.0f, 10.0f },
+        { 6.0f, 6.0f, 4.0f },
     };
     std::vector<Box3D> boxesB = boxesA;
     std::reverse(boxesB.begin(), boxesB.end());
@@ -66,7 +62,7 @@ static void test_order_independent_packable() {
     assert(rA.packedCount == rB.packedCount);
     assert(rA.placementMap.size() == boxesA.size());
     assert_valid_placement(rA.placementMap, bed);
-    std::cout << "[ok] order-independent packable set\n";
+    std::cout << "[ok] order-independent packable set" << std::endl;
 }
 
 // (b) Two boxes that each fit an orientation and whose combined volume is below
@@ -82,7 +78,7 @@ static void test_overlap_rejected() {
     VectorMatchResult r = VectorMatcherEngine::evaluatePackingAVX(bed, boxes);
     assert(r.fits == false && "overlapping boxes must be rejected");
     assert(r.placementMap.empty() && "no placement when packing is infeasible");
-    std::cout << "[ok] overlapping cubes rejected\n";
+    std::cout << "[ok] overlapping cubes rejected" << std::endl;
 }
 
 // (c) Sanity: an obviously infeasible request is rejected, and a trivially
@@ -98,7 +94,7 @@ static void test_volume_bounds() {
     assert(r.fits == true);
     assert(r.packedCount == 2);
     assert_valid_placement(r.placementMap, bed);
-    std::cout << "[ok] volume bounds sanity\n";
+    std::cout << "[ok] volume bounds sanity" << std::endl;
 }
 
 // (d) Regression for mixed-coordinate extreme points: the third box can only
@@ -119,7 +115,7 @@ static void test_mixed_coordinate_anchor() {
     assert(result.packedCount == boxes.size());
     assert(result.placementMap.size() == boxes.size());
     assert_valid_placement(result.placementMap, bed);
-    std::cout << "[ok] mixed-coordinate extreme point packing\n";
+    std::cout << "[ok] mixed-coordinate extreme point packing" << std::endl;
 }
 
 int main() {
@@ -127,6 +123,6 @@ int main() {
     test_overlap_rejected();
     test_volume_bounds();
     test_mixed_coordinate_anchor();
-    std::cout << "All vector-matcher packing tests passed.\n";
+    std::cout << "All vector-matcher packing tests passed." << std::endl;
     return 0;
 }
