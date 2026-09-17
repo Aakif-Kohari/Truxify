@@ -21,6 +21,14 @@ async def verify_api_key(x_api_key: str = Header(None, alias="X-API-Key")):
     if not x_api_key or not hmac.compare_digest(x_api_key, ml_api_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
+# ---------------------------------------------------------------------------
+# Registry of ML route modules to attempt loading.
+# Each entry: (module_name, description)
+#
+# To add a new ML route module, simply append an entry here.  The
+# registration function will attempt to import it and include its
+# ``router`` attribute on the FastAPI application.
+# ---------------------------------------------------------------------------
 ML_ROUTE_MODULES: list[tuple[str, str]] = [
     ("ab_testing", "A/B Testing"),
     ("anomaly_routes", "Anomaly Detection"),
@@ -43,8 +51,22 @@ ML_ROUTE_MODULES: list[tuple[str, str]] = [
 ]
 
 
+
+
 def register_ml_routers(app: "FastAPI") -> list[str]:
-    """Dynamically import and register ML route modules on *app*."""
+    """Dynamically import and register ML route modules on *app*.
+
+    For every module listed in :data:`ML_ROUTE_MODULES` the function
+    attempts a dynamic import.  If the import succeeds and the module
+    exposes a ``router`` attribute, that router is included on the app.
+    If the import fails due to a missing optional dependency the module
+    is silently skipped and a warning is logged.
+
+    Returns
+    -------
+    list[str]
+        Names of the modules that were successfully registered.
+    """
     registered: list[str] = []
 
     for module_name, description in ML_ROUTE_MODULES:
@@ -84,6 +106,5 @@ def register_ml_routers(app: "FastAPI") -> list[str]:
         logger.info("Registered ML router: %s [%s]", description, module_name)
 
     return registered
-
 
 from . import _gnn_event_loop_isolation_patch
