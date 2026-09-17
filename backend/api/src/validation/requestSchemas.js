@@ -436,6 +436,20 @@ export const reportGripDataSchema = z.object({
   ).optional().default(0),
 }).strict();
 
+// ── KEDA autoscaling metric query schemas ───────────────────────────────
+// Deliberately NOT .strict(): callers may append unrelated query params
+// (e.g. cache busters) and the previous handlers only read what they need.
+
+export const kedaNamespaceQuerySchema = z.object({
+  namespace: z.string().min(1, 'namespace is required'),
+  deployment: z.string().min(1, 'deployment is required'),
+});
+
+export const kedaKafkaLagQuerySchema = z.object({
+  topic: z.string().min(1, 'topic is required'),
+  consumerGroup: z.string().min(1, 'consumerGroup is required'),
+});
+
 /**
  * Schema for POST /api/driver/weigh-stations/sync-weight.
  * NOTE: defined once above (truck_id + string axle position); the driver
