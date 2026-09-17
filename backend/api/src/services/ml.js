@@ -211,12 +211,12 @@ export async function predictPrice({
 
   const adjustedPrice = initialValidation.validated.estimated_price * safeMultiplier;
   // Only forward min_price/max_price keys when the raw response actually
-  // carried them — injecting undefined values trips the response validator.
+  // carried valid finite numbers — injecting undefined/NaN/Infinity trips the response validator.
   const revalidated = validatePricePrediction({
       ...raw,
       estimated_price: adjustedPrice,
-      ...(typeof raw?.min_price === 'number' ? { min_price: raw.min_price * safeMultiplier } : {}),
-      ...(typeof raw?.max_price === 'number' ? { max_price: raw.max_price * safeMultiplier } : {}),
+      ...(Number.isFinite(raw?.min_price) ? { min_price: raw.min_price * safeMultiplier } : {}),
+      ...(Number.isFinite(raw?.max_price) ? { max_price: raw.max_price * safeMultiplier } : {}),
   });
 
   if (!revalidated.ok) {

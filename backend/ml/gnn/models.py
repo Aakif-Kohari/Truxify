@@ -35,6 +35,7 @@ class GNNRouteModel(nn.Module):
         self.output_dim = output_dim
         self.edge_dim = edge_dim
         
+        # Graph convolution layers
         self.conv1 = GCNConv(input_dim, hidden_dim)
         if edge_dim:
             self.conv2 = GATConv(hidden_dim, hidden_dim, heads=4, concat=True, edge_dim=edge_dim)
@@ -42,13 +43,18 @@ class GNNRouteModel(nn.Module):
             self.conv2 = GATConv(hidden_dim, hidden_dim, heads=4, concat=True)
         self.conv3 = SAGEConv(hidden_dim * 4, hidden_dim)
         
+        
+        # Attention mechanism
         self.attention = nn.MultiheadAttention(hidden_dim, num_heads=8)
         
+        # Output layers
         self.lin1 = nn.Linear(hidden_dim, output_dim)
         self.lin2 = nn.Linear(output_dim, 1)
         
+        # Dropout
         self.dropout = nn.Dropout(0.2)
         
+        # Batch normalization
         self.bn1 = nn.BatchNorm1d(hidden_dim)
         self.bn2 = nn.BatchNorm1d(hidden_dim * 4)
         
@@ -56,11 +62,13 @@ class GNNRouteModel(nn.Module):
     
     def forward(self, x, edge_index, edge_attr=None, batch=None):
         """Execute forward pass through GNN convolution, attention, and pooling layers."""
+        # First GCN layer
         x = self.conv1(x, edge_index)
         x = F.relu(x)
         x = self.bn1(x)
         x = self.dropout(x)
         
+        # Second GAT layer with edge attributes
         if getattr(self, 'edge_dim', None) is not None:
             if edge_attr is None:
                 edge_attr = torch.zeros((edge_index.size(1), self.edge_dim), dtype=torch.float, device=x.device)
@@ -71,13 +79,16 @@ class GNNRouteModel(nn.Module):
         x = self.bn2(x)
         x = self.dropout(x)
         
+        # Third SAGE layer
         x = self.conv3(x, edge_index)
         x = F.relu(x)
         x = self.dropout(x)
         
+        # Global pooling
         if batch is not None:
             x = global_mean_pool(x, batch)
         
+        # Output
         x = self.lin1(x)
         x = F.relu(x)
         x = self.dropout(x)
@@ -85,22 +96,21 @@ class GNNRouteModel(nn.Module):
         
         return x.squeeze()
 
+# Backward-compatibility alias
 RouteGNN = GNNRouteModel
 
 class GraphNetworkBuilder:
-    """Build road network graphs for GNN."""
+    """Build directed road network graphs for GNN route optimization."""
     
     def __init__(self):
-        """Initialize empty road network graph and feature mappings."""
-        self.graph = nx.Graph()
+        """Initialize a directed road network graph and feature mappings."""
+        self.graph = nx.DiGraph()
         self.node_features = {}
         self.edge_features = {}
         
     def build_road_network(self, nodes, edges):
-        """Build a road network after validating every edge endpoint."""
+        """Build road network after validating every edge endpoint."""
         node_ids = {node['id'] for node in nodes}
-
-        # Validate every edge before mutating the graph.
         for edge in edges:
             source = edge['source']
             target = edge['target']
@@ -145,6 +155,7 @@ class GraphNetworkBuilder:
         edge_indices = []
         edge_features = []
         
+        # Node features
         node_map = {}
         for i, (node, data) in enumerate(self.graph.nodes(data=True)):
             node_map[node] = i
@@ -157,6 +168,7 @@ class GraphNetworkBuilder:
             ]
             node_features.append(features)
         
+        # Edge features
         for u, v, data in self.graph.edges(data=True):
             edge_indices.append([node_map[u], node_map[v]])
             edge_features.append([
@@ -169,10 +181,19 @@ class GraphNetworkBuilder:
 
         self.node_map = node_map
 
+        if edge_indices:
+            edge_index = torch.tensor(
+                edge_indices, dtype=torch.long
+            ).t().contiguous()
+            edge_attr = torch.tensor(edge_features, dtype=torch.float)
+        else:
+            edge_index = torch.empty((2, 0), dtype=torch.long)
+            edge_attr = torch.empty((0, GNN_EDGE_FEATURE_DIM), dtype=torch.float)
+
         return {
             'node_features': torch.tensor(node_features, dtype=torch.float),
-            'edge_indices': torch.tensor(edge_indices, dtype=torch.long).t().contiguous(),
-            'edge_features': torch.tensor(edge_features, dtype=torch.float)
+            'edge_indices': edge_index,
+            'edge_features': edge_attr
         }
     
     def _road_type_encoding(self, road_type):
@@ -213,15 +234,21 @@ class RouteOptimizer:
     def optimize_route(self, start_node, end_node, graph_data, objectives=['time', 'cost', 'fuel'], constraints=None):
         """Optimize route using GNN and constrained Dijkstra pathfinding."""
         try:
+            # Convert to PyTorch Geometric
             data = graph_data.to(self.device)
+
+            # Validate the node-feature dimension matches the model before the
+            # GCN conv layers run (otherwise Linear raises a cryptic size mismatch).
             if hasattr(self.model, 'input_dim') and data.x.shape[1] != self.model.input_dim:
                 raise ValueError(
                     f"Node feature dim mismatch: model expects {self.model.input_dim}, got {data.x.shape[1]}"
                 )
 
+            # Get node embeddings
             with torch.no_grad():
                 embeddings = self.model(data.x, data.edge_index, data.edge_attr)
             
+            # Find optimal route using embeddings and constraints
             route = self._find_optimal_route(
                 start_node, end_node, 
                 embeddings.cpu().numpy() if hasattr(embeddings, 'cpu') else np.array(embeddings),
@@ -230,6 +257,7 @@ class RouteOptimizer:
                 constraints
             )
             
+            # Strict reachability verification: accept empty route for zero-hop (start == end)
             if route is None or (start_node != end_node and (not route or route[-1]['to'] != end_node)):
                 logger.warning(f"No complete route found from {start_node} to {end_node}")
                 return None
@@ -270,35 +298,49 @@ class RouteOptimizer:
         constraints = constraints or {}
 
         def weight_func(u, v, edge_attrs):
+            # Hard constraints validation
+            # 1. Hazmat restriction: if route has hazmat cargo, road must permit hazmat
             if constraints.get('hazmat', False) and not edge_attrs.get('hazmat_allowed', True):
                 return None
+
+            # 2. Weight / Capacity constraint: truck weight exceeds road capacity / bridge rating
             truck_weight = constraints.get('truck_weight') or constraints.get('weight')
             max_weight = edge_attrs.get('max_weight') or edge_attrs.get('weight_limit')
             if truck_weight is not None and max_weight is not None and truck_weight > max_weight:
                 return None
+
+            # 3. Height / Clearance constraint
             truck_height = constraints.get('truck_height') or constraints.get('height')
             max_height = edge_attrs.get('max_height') or edge_attrs.get('height_limit')
             if truck_height is not None and max_height is not None and truck_height > max_height:
                 return None
+
             return self._calculate_score(embeddings, u, v, objectives, graph_data, node_map)
 
-        max_time = constraints.get('max_time') or constraints.get('hos_limit')
+        max_time = constraints.get('max_time')
+        if max_time is None:
+            max_time = constraints.get('hos_limit')
         path = None
 
         if max_time is not None:
+            # Constrained shortest path: track cumulative elapsed time in priority queue
+            # to prune paths exceeding max_time and explore feasible alternate routes
             pq = [(0.0, 0.0, start, [start])]
             best_state = {}
 
             while pq:
                 curr_score, curr_time, u, u_path = heapq.heappop(pq)
+
                 if u == end:
                     path = u_path
                     break
+
                 if u in best_state:
                     prev_score, prev_time = best_state[u]
                     if curr_score >= prev_score and curr_time >= prev_time:
                         continue
                 best_state[u] = (curr_score, curr_time)
+
                 for v in graph_data.graph.neighbors(u):
                     if v in u_path:
                         continue
@@ -306,10 +348,12 @@ class RouteOptimizer:
                     edge_weight = weight_func(u, v, edge_attrs)
                     if edge_weight is None:
                         continue
+
                     edge_time = float(edge_attrs.get('time', 0))
                     new_time = curr_time + edge_time
                     if new_time > max_time:
                         continue
+
                     new_score = curr_score + edge_weight
                     heapq.heappush(pq, (new_score, new_time, v, u_path + [v]))
         else:
@@ -335,45 +379,70 @@ class RouteOptimizer:
                 'fuel': edge_data.get('fuel', 0),
                 'congestion': edge_data.get('congestion', 0)
             })
+
         return route
     
     def _calculate_score(self, embeddings, current, neighbor, objectives, graph_data, node_map=None):
         """Calculate route score using GNN embeddings and selected edge objectives."""
         score = 0.0
         edge_data = graph_data.graph[current][neighbor]
-        weights = {'time': 1.0, 'cost': 0.5, 'fuel': 0.3, 'distance': 0.2, 'congestion': 2.0}
+        
+        weights = {
+            'time': 1.0,
+            'cost': 0.5,
+            'fuel': 0.3,
+            'distance': 0.2,
+            'congestion': 2.0
+        }
+        
         for obj in objectives:
             if obj in edge_data:
                 score += weights.get(obj, 1.0) * float(edge_data[obj])
+
+        # Add embedding distance heuristic
         if node_map is None:
             node_map = getattr(graph_data, 'node_map', None)
+            
         if embeddings is not None and node_map and current in node_map and neighbor in node_map:
             try:
                 emb_c = embeddings[node_map[current]]
                 emb_n = embeddings[node_map[neighbor]]
-                score += 0.1 * float(np.linalg.norm(emb_c - emb_n))
+                emb_dist = float(np.linalg.norm(emb_c - emb_n))
+                score += 0.1 * emb_dist
             except Exception:
                 pass
+        
+        # Non-negative weight guard for Dijkstra
         return max(score, 1e-6)
     
     def train(self, train_data, val_data=None, epochs=100):
         """Train GNN model"""
         optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         criterion = nn.MSELoss()
+        
         for epoch in range(epochs):
             self.model.train()
             total_loss = 0
+            
             for data in train_data:
                 data = data.to(self.device)
                 optimizer.zero_grad()
+                
+                # Forward pass
                 out = self.model(data.x, data.edge_index, data.edge_attr, data.batch)
                 loss = criterion(out, data.y)
+                
+                # Backward pass
                 loss.backward()
                 optimizer.step()
+                
                 total_loss += loss.item()
+            
             avg_loss = total_loss / len(train_data)
+            
             if epoch % 10 == 0:
                 logger.info(f"Epoch {epoch}: Loss = {avg_loss:.4f}")
+        
         return avg_loss
     
     def save_model(self, path='models/gnn_route.pth'):
@@ -392,14 +461,17 @@ class RouteOptimizer:
         """Return whether an edge satisfies the active hard route constraints."""
         if constraints.get('hazmat', False) and not edge_data.get('hazmat_allowed', True):
             return False
+        
         truck_weight = constraints.get('truck_weight') or constraints.get('weight')
         max_weight = edge_data.get('max_weight') or edge_data.get('weight_limit')
         if truck_weight is not None and max_weight is not None and truck_weight > max_weight:
             return False
+        
         truck_height = constraints.get('truck_height') or constraints.get('height')
         max_height = edge_data.get('max_height') or edge_data.get('height_limit')
         if truck_height is not None and max_height is not None and truck_height > max_height:
             return False
+        
         return True
 
     def _route_result_for_path(self, path, graph_data):
@@ -409,9 +481,13 @@ class RouteOptimizer:
             u, v = path[i], path[i + 1]
             edge_data = graph_data.graph[u][v]
             route.append({
-                'from': u, 'to': v, 'distance': edge_data.get('distance', 0),
-                'time': edge_data.get('time', 0), 'cost': edge_data.get('cost', 0),
-                'fuel': edge_data.get('fuel', 0), 'congestion': edge_data.get('congestion', 0)
+                'from': u,
+                'to': v,
+                'distance': edge_data.get('distance', 0),
+                'time': edge_data.get('time', 0),
+                'cost': edge_data.get('cost', 0),
+                'fuel': edge_data.get('fuel', 0),
+                'congestion': edge_data.get('congestion', 0)
             })
         return self._build_route_result(route)
 
@@ -419,7 +495,9 @@ class RouteOptimizer:
         """Return True when left is no worse in every objective and better in one."""
         left_values = tuple(left[f'total_{objective}'] for objective in objectives)
         right_values = tuple(right[f'total_{objective}'] for objective in objectives)
-        return all(a <= b for a, b in zip(left_values, right_values)) and any(a < b for a, b in zip(left_values, right_values))
+        return all(a <= b for a, b in zip(left_values, right_values)) and any(
+            a < b for a, b in zip(left_values, right_values)
+        )
 
     def _pareto_frontier(self, candidates, objectives):
         """Filter a set of route results down to its nondominated frontier."""
@@ -445,18 +523,24 @@ class RouteOptimizer:
             return []
         if start == end:
             return [self._build_route_result([])]
+
+        # Each label stores cumulative objective values, elapsed time, and the simple path.
         labels = {start: [((0.0,) * len(objectives), 0.0, (start,))]}
         queue = [(tuple(0.0 for _ in objectives), 0.0, (start,))]
+
         while queue:
             current_values, current_time, current_path = heapq.heappop(queue)
             current_node = current_path[-1]
+            
             if current_node != end:
                 for neighbor in graph_data.graph.neighbors(current_node):
                     if neighbor in current_path:
                         continue
+
                     edge_data = graph_data.graph[current_node][neighbor]
                     if not self._edge_is_feasible(edge_data, constraints):
                         continue
+
                     edge_time = float(edge_data.get('time', 0))
                     new_time = current_time + edge_time
                     max_time = constraints.get('max_time')
@@ -464,11 +548,17 @@ class RouteOptimizer:
                         max_time = constraints.get('hos_limit')
                     if max_time is not None and new_time > max_time:
                         continue
-                    new_values = tuple(current_values[index] + float(edge_data.get(objective, 0)) for index, objective in enumerate(objectives))
+
+                    new_values = tuple(
+                        current_values[index] + float(edge_data.get(objective, 0))
+                        for index, objective in enumerate(objectives)
+                    )
                     new_path = current_path + (neighbor,)
                     new_label = (new_values, new_time, new_path)
+
                     existing_labels = labels.setdefault(neighbor, [])
                     candidate_result = self._route_result_for_path(new_path, graph_data)
+
                     dominated = False
                     survivors = []
                     for existing_values, existing_time, existing_path in existing_labels:
@@ -480,12 +570,15 @@ class RouteOptimizer:
                         if self._pareto_dominates(candidate_result, existing_result, objectives):
                             continue
                         survivors.append((existing_values, existing_time, existing_path))
+
                     if dominated:
                         labels[neighbor] = survivors
                         continue
+
                     survivors.append(new_label)
                     labels[neighbor] = survivors
                     heapq.heappush(queue, new_label)
+
         destination_labels = labels.get(end, [])
         candidates = [self._route_result_for_path(path, graph_data) for _, _, path in destination_labels]
         return self._pareto_frontier(candidates, objectives)
@@ -497,7 +590,9 @@ class RouteOptimizer:
         if not frontier:
             return None
         weights = {'time': 0.5, 'cost': 0.3, 'fuel': 0.2}
-        best_route = min(frontier, key=lambda candidate: sum(weights[objective] * candidate[f'total_{objective}'] for objective in objectives))
+        best_route = min(frontier, key=lambda candidate: sum(
+            weights[objective] * candidate[f'total_{objective}'] for objective in objectives
+        ))
         result = dict(best_route)
         result['pareto_routes'] = frontier
         result['pareto_count'] = len(frontier)
@@ -539,16 +634,29 @@ class RouteOptimizer:
             return updated_route
         builder = GraphNetworkBuilder()
         nodes = [
-            {'id': node_id, 'lat': attrs.get('lat', 0), 'lng': attrs.get('lng', 0),
-             'traffic': attrs.get('traffic', 0), 'road_type': attrs.get('road_type', 'local'),
-             'speed_limit': attrs.get('speed_limit', 50)}
+            {
+                'id': node_id,
+                'lat': attrs.get('lat', 0),
+                'lng': attrs.get('lng', 0),
+                'traffic': attrs.get('traffic', 0),
+                'road_type': attrs.get('road_type', 'local'),
+                'speed_limit': attrs.get('speed_limit', 50),
+            }
             for node_id, attrs in graph.nodes(data=True)
         ]
         edges = [
-            {'source': u, 'target': v, 'distance': attrs.get('distance', 0),
-             'time': attrs.get('time', 0), 'cost': attrs.get('cost', 0), 'fuel': attrs.get('fuel', 0),
-             'congestion': attrs.get('congestion', 0), 'hazmat_allowed': attrs.get('hazmat_allowed', True),
-             'max_weight': attrs.get('max_weight'), 'max_height': attrs.get('max_height')}
+            {
+                'source': u,
+                'target': v,
+                'distance': attrs.get('distance', 0),
+                'time': attrs.get('time', 0),
+                'cost': attrs.get('cost', 0),
+                'fuel': attrs.get('fuel', 0),
+                'congestion': attrs.get('congestion', 0),
+                'hazmat_allowed': attrs.get('hazmat_allowed', True),
+                'max_weight': attrs.get('max_weight'),
+                'max_height': attrs.get('max_height'),
+            }
             for u, v, attrs in graph.edges(data=True)
         ]
         builder.build_road_network(nodes, edges)
@@ -557,7 +665,10 @@ class RouteOptimizer:
         end = current_route[-1].get('to')
         if start is None or end is None:
             return updated_route
-        rerouted = self._reoptimize(start, end, updated_graph_data, objectives or ['time', 'cost', 'fuel'], constraints)
+        rerouted = self._reoptimize(
+            start, end, updated_graph_data,
+            objectives or ['time', 'cost', 'fuel'], constraints
+        )
         return rerouted if rerouted is not None else updated_route
 
     def _apply_traffic_to_route(self, route, traffic_data):
