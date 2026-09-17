@@ -28,6 +28,10 @@ from collections import deque, defaultdict
 logger = logging.getLogger(__name__)
 Base = declarative_base()
 
+DEFAULT_TRAFFIC_SPEED = 50.0
+DEFAULT_FREE_FLOW_SPEED = 80.0
+DEFAULT_CONGESTION_LEVEL = 0.3
+
 
 def eta_seconds_from_speed(route_distance_m: float, predicted_speed_mps: float) -> Optional[float]:
     """Convert a predicted traffic speed (m/s) into a travel time (seconds).
@@ -146,37 +150,69 @@ class TrafficPipeline:
     async def ingest_traffic_data(self, route_id: str, source: Dict, dest: Dict):
         """Ingest real-time traffic data from multiple sources"""
         try:
-            # Get data from Google Maps
             gmaps_data = await self._fetch_gmaps_traffic(source, dest)
-            
-            # Get data from OSRM
             osrm_data = await self._fetch_osrm_data(source, dest)
-            
-            # Combine and store
+
+            observed_at = datetime.utcnow()
+            traffic_speed = gmaps_data.get('speed')
+            if traffic_speed is None:
+                traffic_speed = osrm_data.get('speed', DEFAULT_TRAFFIC_SPEED)
+            free_flow_speed = osrm_data.get(
+                'free_flow_speed',
+                DEFAULT_FREE_FLOW_SPEED
+            )
+            congestion_level = gmaps_data.get(
+                'congestion',
+                DEFAULT_CONGESTION_LEVEL
+            )
+
+            gmaps_complete = (
+                gmaps_data.get('duration') is not None
+                and gmaps_data.get('duration') > 0
+                and gmaps_data.get('speed') is not None
+                and gmaps_data.get('congestion') is not None
+            )
+            osrm_complete = (
+                osrm_data.get('duration') is not None
+                and osrm_data.get('duration') > 0
+                and osrm_data.get('distance') is not None
+                and osrm_data.get('distance') > 0
+                and osrm_data.get('speed') is not None
+                and osrm_data.get('free_flow_speed') is not None
+            )
+            is_degraded = not (gmaps_complete and osrm_complete)
+
             traffic_entry = TrafficData(
                 route_id=route_id,
                 source_lat=source['lat'],
                 source_lng=source['lng'],
                 dest_lat=dest['lat'],
                 dest_lng=dest['lng'],
-                traffic_speed=gmaps_data.get('speed', osrm_data.get('speed', 50)),
-                free_flow_speed=osrm_data.get('free_flow_speed', 80),
-                congestion_level=gmaps_data.get('congestion', 0.3),
-                day_of_week=datetime.now().weekday(),
-                hour=datetime.now().hour
+                traffic_speed=traffic_speed,
+                free_flow_speed=free_flow_speed,
+                congestion_level=congestion_level,
+                timestamp=observed_at,
+                day_of_week=observed_at.weekday(),
+                hour=observed_at.hour
             )
-            
-            session = self.Session()
-            try:
-                session.add(traffic_entry)
-                session.commit()
-            except Exception:
-                session.rollback()
-                raise
-            finally:
-                session.close()
-            
-            # Cache in Redis
+
+            if not is_degraded:
+                session = self.Session()
+                try:
+                    session.add(traffic_entry)
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    raise
+                finally:
+                    session.close()
+            else:
+                logger.warning(
+                    "Traffic ingestion degraded for route %s; "
+                    "fallback values will not be stored for training",
+                    route_id,
+                )
+
             await asyncio.get_running_loop().run_in_executor(
                 None, partial(self.redis.setex,
                     f"traffic:{route_id}",
@@ -184,12 +220,12 @@ class TrafficPipeline:
                     json.dumps({
                         'speed': traffic_entry.traffic_speed,
                         'congestion': traffic_entry.congestion_level,
-                        'timestamp': traffic_entry.timestamp.isoformat()
+                        'timestamp': traffic_entry.timestamp.isoformat(),
+                        'degraded': is_degraded,
                     })
                 )
             )
-            
-            logger.info(f"Traffic data ingested for route {route_id}")
+
             return traffic_entry
             
         except Exception as e:
@@ -250,7 +286,10 @@ class TrafficPipeline:
     async def _fetch_osrm_data(self, source: Dict, dest: Dict):
         """Fetch routing data from OSRM with timeout, retries and circuit breaker."""
         if self._osrm_circuit_open:
-            return {'speed': 50, 'free_flow_speed': 80}
+            return {
+                'speed': DEFAULT_TRAFFIC_SPEED,
+                'free_flow_speed': DEFAULT_FREE_FLOW_SPEED,
+            }
 
         url = (
             f"{self.osrm_url}/route/v1/driving/"
@@ -282,12 +321,12 @@ class TrafficPipeline:
                                 'speed': (
                                     route['distance'] / route['duration']
                                     if route['duration'] > 0
-                                    else 50
+                                    else DEFAULT_TRAFFIC_SPEED
                                 ),
                                 'free_flow_speed': (
                                     route['distance'] / (route['duration'] * 0.8)
                                     if route['duration'] > 0
-                                    else 80
+                                    else DEFAULT_FREE_FLOW_SPEED
                                 )
                             }
 
@@ -300,7 +339,10 @@ class TrafficPipeline:
                     if self._osrm_failure_count >= 5:
                         self._osrm_circuit_open = True
 
-        return {'speed': 50, 'free_flow_speed': 80}
+        return {
+            'speed': DEFAULT_TRAFFIC_SPEED,
+            'free_flow_speed': DEFAULT_FREE_FLOW_SPEED,
+        }
     
     async def get_real_time_traffic(self, route_id: str):
         """Get real-time traffic data for a route"""
