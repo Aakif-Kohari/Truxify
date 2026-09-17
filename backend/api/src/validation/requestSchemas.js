@@ -206,10 +206,16 @@ export const updateWalletSchema = z.object({
   ),
 }).strict();
 
+// Shared token shape for all device schemas. Mirrors the character allowlist
+// that deviceController.validateFcmToken enforces so malformed tokens are
+// rejected at the gateway (zod) layer before reaching the controller.
+export const fcmTokenSchema = z.string()
+  .min(10, { message: 'fcmToken must be at least 10 characters' })
+  .max(4096, { message: 'fcmToken is too long' })
+  .regex(/^[a-zA-Z0-9\-_:.%/+=]+$/, { message: 'fcmToken contains invalid characters' });
+
 export const registerDeviceSchema = z.object({
-  fcmToken: z.string()
-    .min(10, { message: 'fcmToken must be at least 10 characters' })
-    .max(4096, { message: 'fcmToken is too long' }),
+  fcmToken: fcmTokenSchema,
   platform: z.enum(['android', 'ios', 'web'], {
     invalid_type_error: 'platform must be one of: android, ios, web',
   }).default('android'),
@@ -222,16 +228,11 @@ export const registerDeviceSchema = z.object({
 }).strict();
 
 export const unregisterDeviceSchema = z.object({
-  fcmToken: z.string()
-    .min(10, { message: 'fcmToken must be at least 10 characters' })
-    .max(4096, { message: 'fcmToken is too long' }),
+  fcmToken: fcmTokenSchema,
 }).strict();
 
 export const updateFcmTokenSchema = z.object({
-  fcmToken: z.string()
-    .min(10, { message: 'fcmToken must be at least 10 characters' })
-    .max(4096, { message: 'fcmToken is too long' })
-    .nullable(),
+  fcmToken: fcmTokenSchema.nullable(),
 }).strict();
 
 export const createTicketSchema = z.object({
