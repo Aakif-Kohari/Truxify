@@ -454,9 +454,11 @@ class TrafficPipeline:
                 # speed into an ETA in seconds using the route distance so the
                 # value is meaningful as a travel time. The rolling window is
                 # keyed by the order's route id (issue #11666).
+                route_signature = self.build_route_signature(destination)
                 predicted_speed_mps = self.predict_eta(
                     features,
-                    f"order_{order_id}"
+                    f"order_{order_id}",
+                    route_signature
                 )
 
                 if predicted_speed_mps is not None:
@@ -506,14 +508,14 @@ class TrafficPipeline:
             return None
     
     async def get_route_congestion(self, route_id: str):
-        """Get congestion level for a route""
+        """Get congestion level for a route"""
         traffic = await self.get_real_time_traffic(route_id)
         if traffic:
             return traffic.get('congestion', 0)
         return 0
     
     async def get_traffic_forecast(self, route_id: str, hours: int = 1):
-        """Get traffic forecast for next N hours""
+        """Get traffic forecast for next N hours"""
         # Get historical data for this route
         session = self.Session()
         try:
