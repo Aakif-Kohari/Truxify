@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from services import traffic_pipeline as traffic_pipeline_module
 from services.traffic_pipeline import TrafficPipeline
 
 
@@ -44,6 +45,13 @@ def make_pipeline(rows):
     pipeline.model.fit = MagicMock()
     pipeline.model.save = MagicMock()
     return pipeline
+
+
+def test_pipeline_model_loading_is_safe_without_tensorflow(monkeypatch):
+    monkeypatch.setattr(traffic_pipeline_module, "HAS_TF", False)
+    pipeline = object.__new__(TrafficPipeline)
+
+    assert pipeline._load_or_create_model() is None
 
 
 def test_validation_is_temporal_and_route_grouped(monkeypatch):
