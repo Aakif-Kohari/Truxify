@@ -1,6 +1,10 @@
 const { subtask } = require("hardhat/config");
-const { TASK_COMPILE_SOLIDITY_READ_FILE } = require("hardhat/builtin-tasks/task-names");
+const {
+  TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS,
+  TASK_COMPILE_SOLIDITY_READ_FILE,
+} = require("hardhat/builtin-tasks/task-names");
 const fs = require("fs");
+const path = require("path");
 
 require("@nomicfoundation/hardhat-ethers");
 require("@nomicfoundation/hardhat-chai-matchers");
@@ -36,6 +40,35 @@ function getNetworkConfig(name, url, chainId, privateKey) {
   };
 }
 
+function collectSolidityFiles(directory) {
+  const files = [];
+
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+
+    if (entry.isDirectory()) {
+      files.push(...collectSolidityFiles(entryPath));
+    } else if (entry.isFile() && entry.name.endsWith(".sol")) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
+}
+
+subtask(TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS).setAction(async (_, { config }) => {
+  const sourcePaths = collectSolidityFiles(config.paths.sources);
+
+  for (const sourcePath of sourcePaths) {
+    const content = fs.readFileSync(sourcePath, "utf8");
+    if (content.charCodeAt(0) === 0xfeff) {
+      fs.writeFileSync(sourcePath, content.slice(1), "utf8");
+    }
+  }
+
+  return sourcePaths;
+});
+
 subtask(TASK_COMPILE_SOLIDITY_READ_FILE).setAction(async ({ absolutePath }) => {
   const content = fs.readFileSync(absolutePath, "utf8");
   return content.replace(/^\uFEFF/, "");
@@ -47,10 +80,31 @@ module.exports = {
       {
         version: "0.8.20",
         settings: {
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
+          optimizer: { enabled: true, runs: 200 },
+          viaIR: true,
+          evmVersion: "cancun",
+        },
+      },
+      {
+        version: "0.8.21",
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
+          viaIR: true,
+          evmVersion: "cancun",
+        },
+      },
+      {
+        version: "0.8.22",
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
+          viaIR: true,
+          evmVersion: "cancun",
+        },
+      },
+      {
+        version: "0.8.23",
+        settings: {
+          optimizer: { enabled: true, runs: 200 },
           viaIR: true,
           evmVersion: "cancun",
         },
@@ -58,10 +112,7 @@ module.exports = {
       {
         version: "0.8.24",
         settings: {
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
+          optimizer: { enabled: true, runs: 200 },
           viaIR: true,
           evmVersion: "cancun",
         },
