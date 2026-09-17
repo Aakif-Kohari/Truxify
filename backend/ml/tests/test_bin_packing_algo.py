@@ -83,6 +83,19 @@ class TestOptimisePacking:
         assert result["packing_arrangement"][0]["fits"] is False
         assert result["unpacked_packages"] == [0]
 
+    def test_package_can_rotate_height_into_length(self):
+        """A package should fit when its height becomes the truck length."""
+        truck = make_truck(length=3.0, width=2.0, height=1.0)
+        packages = [{"length": 1.0, "width": 2.0, "height": 3.0, "weight": 100.0}]
+
+        result = optimise_packing(packages, truck, make_addresses(1))
+
+        arrangement = result["packing_arrangement"][0]
+        assert arrangement["fits"] is True
+        assert arrangement["rotated"] is True
+        assert result["unpacked_packages"] == []
+        assert result["stop_sequence"] == [0]
+
     def test_utilization_is_non_negative(self):
         """The reported utilisation must be within 0..100."""
         result = optimise_packing(make_packages(3), make_truck(), make_addresses(3))
