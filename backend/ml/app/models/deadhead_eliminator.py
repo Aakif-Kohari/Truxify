@@ -89,7 +89,8 @@ def _fetch_pickup_route_durations(
             timeout=_OSRM_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
-        durations = response.json().get("durations")
+        payload = response.json()
+        durations = payload.get("durations") if isinstance(payload, dict) else None
         if (
             not isinstance(durations, list)
             or len(durations) != 1
@@ -189,8 +190,12 @@ def find_return_loads(
             route_duration_seconds = None
             if route_durations is not None:
                 candidate_duration = route_durations[index]
-                if isinstance(candidate_duration, (int, float)) and math.isfinite(candidate_duration):
+                if candidate_duration is None:
+                    route_duration_seconds = float("inf")
+                elif isinstance(candidate_duration, (int, float)) and math.isfinite(candidate_duration):
                     route_duration_seconds = max(0.0, float(candidate_duration))
+                else:
+                    route_duration_seconds = float("inf")
 
             travel_hours = (
                 route_duration_seconds / 3600.0
