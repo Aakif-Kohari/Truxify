@@ -84,14 +84,20 @@ export class W3cCredentialIssuer {
     statusIndexStorePath = process.env.TRUXIFY_VC_STATUS_INDEX_FILE || DEFAULT_STATUS_INDEX_FILE
   ) {
     this.statusIndexStore = new StatusListIndexStore(statusIndexStorePath);
-    if (privateKeyPem) {
-      this.privateKey = crypto.createPrivateKey(privateKeyPem);
-      this.publicKey = crypto.createPublicKey(this.privateKey);
-    } else {
+
+    if (!privateKeyPem) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('TRUXIFY_VC_PRIVATE_KEY is required in production; refusing to generate an ephemeral issuer key.');
+      }
+
       const keyPair = crypto.generateKeyPairSync('ed25519');
       this.privateKey = keyPair.privateKey;
       this.publicKey = keyPair.publicKey;
+      return;
     }
+
+    this.privateKey = crypto.createPrivateKey(privateKeyPem);
+    this.publicKey = crypto.createPublicKey(this.privateKey);
   }
 
   issueDriverCredential(driverId, attributes) {
