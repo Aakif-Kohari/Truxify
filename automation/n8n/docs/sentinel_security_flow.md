@@ -22,7 +22,10 @@ graph TD
 pause never fires (#13925).
 
 The endpoint is one-way: it only ever *opens* the escrow circuit breaker. Closing
-it is an operator action — `POST /api/internal/pause-escrow {"paused": false}`.
+it is an operator action — `POST /api/internal/pause-escrow {"paused": false}` —
+which additionally requires the dedicated `ESCROW_OPERATOR_API_KEY` (a valid
+internal API key alone is answered 403), so the shared automation credential can
+never re-enable escrow submissions.
 
 ## Payload and failure handling
 The pause node forwards `reason` (the matched heuristic and observed gas price)

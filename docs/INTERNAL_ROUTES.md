@@ -28,11 +28,13 @@ Reports escrow event counts (deposits, releases, refunds) within a rolling windo
 
 Opens or closes the escrow circuit breaker (`{"paused": true|false}`). While open, every on-chain escrow submission in `services/escrow.js` is refused.
 
+Closing the circuit (`{"paused": false}`) is **operator-only**: it additionally requires the key designated by `ESCROW_OPERATOR_API_KEY` (presented in the same `x-api-key` header; the key must also be listed in `VALID_API_KEYS`). Any other valid internal key is answered `403` and the breaker is not touched. When `ESCROW_OPERATOR_API_KEY` is not configured, unpause attempts fail closed with `403`. Opening the circuit keeps the plain `requireApiKey` behavior.
+
 ---
 
 ## Security
 
-Both endpoints are gated by `requireApiKey` (`x-api-key` header or `api_key` query against `VALID_API_KEYS`), so only authenticated B2B callers can reach them. Responses never expose internal infrastructure details.
+All endpoints are gated by `requireApiKey` (`x-api-key` header against `VALID_API_KEYS`), so only authenticated B2B callers can reach them. Closing the escrow circuit breaker is further restricted to the dedicated escrow operator key — see `docs/API_KEY_AUTH.md`. Responses never expose internal infrastructure details.
 
 ---
 
