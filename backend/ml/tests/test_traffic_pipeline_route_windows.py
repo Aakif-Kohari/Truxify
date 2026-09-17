@@ -2,7 +2,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from backend.ml.services.traffic_pipeline import TrafficPipeline
+from services.traffic_pipeline import TrafficPipeline
 
 
 def make_pipeline():
