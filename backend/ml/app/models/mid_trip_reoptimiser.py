@@ -3,7 +3,7 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
-from app.utils.osrm_client import get_route_matrix_with_duration
+from utils.osrm_client import get_route_matrix_with_duration
 
 logger = logging.getLogger(__name__)
 
