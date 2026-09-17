@@ -74,7 +74,8 @@ def _fetch_route_duration_matrix(
             timeout=_OSRM_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
-        durations = response.json().get("durations")
+        payload = response.json()
+        durations = payload.get("durations") if isinstance(payload, dict) else None
         if not isinstance(durations, list) or len(durations) != len(drivers):
             logger.warning("OSRM returned an invalid bilateral duration matrix")
             return None
@@ -137,8 +138,10 @@ def _deadline_urgency(
     Road-network duration is preferred when available. The previous straight-line
     distance estimate is retained only as an explicit routing-service fallback.
     """
-    if route_duration_seconds is not None and math.isfinite(route_duration_seconds):
-        travel_hours = max(0.0, route_duration_seconds) / 3600.0
+    if route_duration_seconds is not None:
+        if not math.isfinite(route_duration_seconds) or route_duration_seconds < 0:
+            return _PENALTY_INFEASIBLE
+        travel_hours = route_duration_seconds / 3600.0
     else:
         travel_hours = distance_km / _FALLBACK_AVG_SPEED_KMH
 
@@ -227,8 +230,12 @@ def match_bilateral(
             route_duration_seconds = None
             if route_durations is not None:
                 candidate_duration = route_durations[j][i]
-                if isinstance(candidate_duration, (int, float)) and math.isfinite(candidate_duration):
+                if candidate_duration is None:
+                    route_duration_seconds = float("inf")
+                elif isinstance(candidate_duration, (int, float)) and math.isfinite(candidate_duration):
                     route_duration_seconds = float(candidate_duration)
+                else:
+                    route_duration_seconds = float("inf")
             c = (
                 dist_km / _MAX_DISTANCE_KM * 100.0  # normalised distance
                 + _weight_penalty(driver, load)
