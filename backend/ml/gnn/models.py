@@ -205,21 +205,36 @@ class GraphNetworkBuilder:
 class RouteOptimizer:
     """GNN-based Route Optimizer"""
     
-    def __init__(self, model_path=None):
+    def __init__(self, model_path=None, allow_untrained=False):
         """Initialize RouteOptimizer with GNNRouteModel and hardware acceleration device."""
         self.model = None
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.is_trained = False
+        self.allow_untrained = allow_untrained
         
         if model_path:
             self.load_model(model_path)
         else:
             self.model = GNNRouteModel().to(self.device)
+            if self.allow_untrained:
+                logger.info("Route Optimizer initialized with untrained weights (dev mode allowed)")
+            else:
+                logger.warning("Route Optimizer initialized without trained weights. Call train() or load_model() before serving.")
         
         logger.info(f"✅ Route Optimizer initialized on {self.device}")
     
     def optimize_route(self, start_node, end_node, graph_data, objectives=['time', 'cost', 'fuel'], constraints=None):
         """Optimize route using GNN and constrained Dijkstra pathfinding."""
+        if not self.is_trained and not self.allow_untrained:
+            logger.error("Attempted route optimization on untrained model")
+            raise RuntimeError("GNN model is untrained. Load a trained checkpoint or enable dev mode.")
+
         try:
+            # Check node presence in graph
+            if not hasattr(graph_data, 'graph') or start_node not in graph_data.graph or end_node not in graph_data.graph:
+                logger.warning(f"Start ({start_node}) or End ({end_node}) node not found in graph")
+                return None
+
             # Convert to PyTorch Geometric
             data = graph_data.to(self.device)
 
@@ -250,6 +265,8 @@ class RouteOptimizer:
 
             return self._build_route_result(route)
             
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Route optimization failed: {e}")
             return None
@@ -406,17 +423,23 @@ class RouteOptimizer:
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         criterion = nn.MSELoss()
         
+        avg_loss = 0.0
         for epoch in range(epochs):
             self.model.train()
-            total_loss = 0
+            total_loss = 0.0
             
             for data in train_data:
                 data = data.to(self.device)
                 optimizer.zero_grad()
                 
                 # Forward pass
-                out = self.model(data.x, data.edge_index, data.edge_attr, data.batch)
-                loss = criterion(out, data.y)
+                batch = getattr(data, 'batch', None)
+                edge_attr = getattr(data, 'edge_attr', None)
+                out = self.model(data.x, data.edge_index, edge_attr, batch)
+                target = getattr(data, 'y', None)
+                if target is None:
+                    target = torch.zeros_like(out)
+                loss = criterion(out, target)
                 
                 # Backward pass
                 loss.backward()
@@ -429,6 +452,8 @@ class RouteOptimizer:
             if epoch % 10 == 0:
                 logger.info(f"Epoch {epoch}: Loss = {avg_loss:.4f}")
         
+        self.is_trained = True
+        self.model.eval()
         return avg_loss
     
     def save_model(self, path='models/gnn_route.pth'):
@@ -445,6 +470,7 @@ class RouteOptimizer:
                 del state_dict[key]
         self.model.load_state_dict(state_dict)
         self.model.eval()
+        self.is_trained = True
         logger.info(f"✅ Model loaded from {path}")
 
     def _edge_is_feasible(self, edge_data, constraints):
