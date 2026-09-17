@@ -48,7 +48,7 @@ async def test_predict_eta_passes_destination_route_version_to_model(monkeypatch
 
     result = await eta_routes.predict_eta(request)
 
-    expected_signature = pipeline.build_route_signature({
+    expected_signature = eta_routes.TrafficPipeline.build_route_signature({
         'lat': 13.0,
         'lng': 78.0,
     })
