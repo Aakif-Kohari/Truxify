@@ -32,10 +32,10 @@ async def verify_api_key(x_api_key: str = Header(None, alias="X-API-Key")):
 
 class ETARequest(BaseModel):
     order_id: str
-    source_lat: float
-    source_lng: float
-    dest_lat: float
-    dest_lng: float
+    source_lat: float = Field(..., ge=-90, le=90, description="Source latitude")
+    source_lng: float = Field(..., ge=-180, le=180, description="Source longitude")
+    dest_lat: float = Field(..., ge=-90, le=90, description="Destination latitude")
+    dest_lng: float = Field(..., ge=-180, le=180, description="Destination longitude")
 
 
 class ETAUpdateRequest(BaseModel):
@@ -55,29 +55,8 @@ class ETAResponse(BaseModel):
     timestamp: str
 
 
-def _order_is_assigned(order_id: str) -> bool:
-    """Return True only if the order exists and is assigned to a driver."""
-    try:
-        from app.models.database import SessionLocal
-        db = SessionLocal()
-        try:
-            result = db.execute(
-                text(
-                    "SELECT 1 FROM orders "
-                    "WHERE order_display_id = :oid AND driver_id IS NOT NULL"
-                ),
-                {"oid": order_id},
-            ).scalar()
-            return result is not None
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"Order verification failed for {order_id}: {e}")
-        return False
-
-
 def _get_order_route(order_id: str) -> Optional[Dict[str, float]]:
-    """Return server-authoritative pickup and drop coordinates for an order."""
+    """Return server-authoritative pickup/drop coordinates for an order."""
     try:
         from app.models.database import SessionLocal
         db = SessionLocal()
@@ -108,15 +87,68 @@ def _get_order_route(order_id: str) -> Optional[Dict[str, float]]:
         return None
 
 
+def _order_is_assigned(order_id: str) -> bool:
+    """Return True only if the order exists and is assigned to a driver."""
+    try:
+        from app.models.database import SessionLocal
+        db = SessionLocal()
+        try:
+            result = db.execute(
+                text(
+                    "SELECT 1 FROM orders "
+                    "WHERE order_display_id = :oid AND driver_id IS NOT NULL"
+                ),
+                {"oid": order_id},
+            ).scalar()
+            return result is not None
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Order verification failed for {order_id}: {e}")
+        return False
+
+
+def _route_order_id(route_id: str) -> Optional[str]:
+    """Resolve the order display id encoded by an ETA route id."""
+    prefix = "order_"
+    if not isinstance(route_id, str) or not route_id.startswith(prefix):
+        return None
+
+    order_id = route_id[len(prefix):].strip()
+    return order_id or None
+
+
+def _route_is_authorized(route_id: str) -> bool:
+    """Return True only for route ids backed by an assigned order."""
+    order_id = _route_order_id(route_id)
+    return order_id is not None and _order_is_assigned(order_id)
+
+
 @router.post("/predict")
 async def predict_eta(request: ETARequest, _auth=Depends(verify_api_key)):
-    """Predict ETA for a trip"""
+    """Predict ETA for a trip using the order's authoritative route."""
+    order_route = _get_order_route(request.order_id)
+    if order_route is None:
+        raise HTTPException(status_code=404, detail="Order not found or route coordinates unavailable")
+
     try:
+        # Use coordinates stored on the order rather than trusting caller input.
+        # This keeps user-controlled coordinates from being persisted to the
+        # TrafficData table used by model retraining.
+        source = {
+            'lat': order_route['source_lat'],
+            'lng': order_route['source_lng'],
+        }
+        destination = {
+            'lat': order_route['dest_lat'],
+            'lng': order_route['dest_lng'],
+        }
+
         # Ingest traffic data
         traffic_data = await traffic_pipeline.ingest_traffic_data(
             f"order_{request.order_id}",
-            {'lat': request.source_lat, 'lng': request.source_lng},
-            {'lat': request.dest_lat, 'lng': request.dest_lng}
+            source,
+            destination
         )
 
         if traffic_data:
@@ -148,8 +180,8 @@ async def predict_eta(request: ETARequest, _auth=Depends(verify_api_key)):
                 # Fetch the actual route distance (metres) from the routing
                 # engine, then convert predicted speed -> travel time.
                 osrm_data = await traffic_pipeline._fetch_osrm_data(
-                    {'lat': request.source_lat, 'lng': request.source_lng},
-                    {'lat': request.dest_lat, 'lng': request.dest_lng}
+                    source,
+                    destination
                 )
                 route_distance_m = float(osrm_data.get('distance') or 0)
                 eta_seconds = eta_seconds_from_speed(route_distance_m, predicted_speed_mps)
@@ -171,6 +203,8 @@ async def predict_eta(request: ETARequest, _auth=Depends(verify_api_key)):
 
         raise HTTPException(status_code=500, detail="ETA prediction failed")
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Internal error: {e}")
 
@@ -209,7 +243,10 @@ async def update_eta(order_id: str, request: ETAUpdateRequest, _auth=Depends(ver
 
 @router.get("/traffic/{route_id}")
 async def get_traffic(route_id: str, _auth=Depends(verify_api_key)):
-    """Get real-time traffic data"""
+    """Get real-time traffic data for an authorized order route."""
+    if not _route_is_authorized(route_id):
+        raise HTTPException(status_code=404, detail="Route not found")
+
     try:
         traffic = await traffic_pipeline.get_real_time_traffic(route_id)
         utc_now = datetime.now(timezone.utc)
@@ -233,7 +270,10 @@ async def get_traffic(route_id: str, _auth=Depends(verify_api_key)):
 
 @router.get("/forecast/{route_id}")
 async def get_forecast(route_id: str, hours: int = Query(1, ge=1, le=24), _auth=Depends(verify_api_key)):
-    """Get traffic forecast"""
+    """Get traffic forecast for an authorized order route."""
+    if not _route_is_authorized(route_id):
+        raise HTTPException(status_code=404, detail="Route not found")
+
     try:
         forecast = await traffic_pipeline.get_traffic_forecast(route_id, hours)
         utc_now = datetime.now(timezone.utc)
