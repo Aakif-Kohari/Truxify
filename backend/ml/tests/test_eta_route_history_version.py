@@ -1,13 +1,15 @@
-import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services import traffic_pipeline
+from services.traffic_pipeline import TrafficPipeline
 
-traffic_pipeline.TrafficPipeline._load_or_create_model = lambda self: MagicMock()
-
-from routes import eta_routes
+_original_pipeline_init = TrafficPipeline.__init__
+TrafficPipeline.__init__ = lambda self, db_url, redis_url: None
+try:
+    from routes import eta_routes
+finally:
+    TrafficPipeline.__init__ = _original_pipeline_init
 
 
 @pytest.mark.asyncio
