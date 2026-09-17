@@ -50,9 +50,17 @@ class FakeRedis:
         val = self.store.get(key)
         return val if val is None else (val if isinstance(val, bytes) else str(val).encode("utf-8"))
 
-    def set(self, key, value):
+    def set(self, key, value, nx=False):
+        if nx and key in self.store:
+            return None
         self.store[key] = value.encode("utf-8") if isinstance(value, str) else value
         return True
+
+    def setnx(self, key, value):
+        if key in self.store:
+            return 0
+        self.store[key] = value.encode("utf-8") if isinstance(value, str) else value
+        return 1
 
     def setex(self, key, time, value):
         self.store[key] = value.encode("utf-8") if isinstance(value, str) else value

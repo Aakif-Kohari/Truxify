@@ -94,7 +94,7 @@ export async function setEscrowPaused(paused) {
  */
 export async function getPauseState() {
   if (!redisClient) {
-    return { paused: false, pausedAt: null };
+    return { paused: true, pausedAt: null, stateUnknown: true };
   }
   try {
     const [value, pausedAt] = await Promise.all([
@@ -105,9 +105,9 @@ export async function getPauseState() {
   } catch (err) {
     logger.error(
       { err: err?.message ?? String(err), event: 'ESCROW_CIRCUIT_BREAKER_READ_ERROR' },
-      '[escrow-circuit-breaker] Failed to read pause state — reporting as not paused.'
+      '[escrow-circuit-breaker] Failed to read pause state — reporting as paused.'
     );
-    return { paused: false, pausedAt: null };
+    return { paused: true, pausedAt: null, stateUnknown: true };
   }
 }
 

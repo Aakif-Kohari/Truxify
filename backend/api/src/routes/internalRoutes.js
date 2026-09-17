@@ -22,11 +22,13 @@
 
 import express from 'express';
 import logger from '../middleware/logger.js';
+import { requireEscrowOperatorKey } from '../middleware/apiKey.js';
 import { supabase, supabaseAdmin } from '../config/db.js';
 import {
   setEscrowPaused,
   getPauseState,
 } from '../services/escrowCircuitBreaker.js';
+import { setEscrowContractPaused } from '../services/escrow.js';
 
 const router = express.Router();
 
@@ -142,17 +144,38 @@ router.get('/escrow-velocity', async (req, res) => {
  *         description: Missing or invalid API key
  *       500:
  *         description: Failed to persist pause state
+ *       502:
+ *         description: Failed to confirm on-chain pause
  */
-router.post('/pause-escrow', async (req, res) => {
+router.post('/pause-escrow', requireEscrowOperatorKey, async (req, res) => {
   try {
     const raw = req.body?.paused;
     const unpause = raw === false || raw === 'false' || raw === 0 || raw === '0' || raw === null;
     const paused = raw === undefined ? true : !unpause;
+
     const result = await setEscrowPaused(paused);
+    const onChainResult = await setEscrowContractPaused(paused);
+
+    if (onChainResult.error) {
+      const redisStatus = result.persisted === false ? 'failed' : 'completed';
+      const action = paused ? 'pause' : 'unpause';
+      return res.status(502).json({
+        error: `Redis ${action} ${redisStatus}, but on-chain ${action} failed.`,
+        onChainError: onChainResult.error,
+        paused: result.paused,
+        persisted: result.persisted !== false,
+      });
+    }
+
     return res.json({
       paused: result.paused,
       updatedAt: result.updatedAt,
       persisted: result.persisted !== false,
+      onChain: {
+        success: true,
+        txHash: onChainResult.txHash,
+        alreadyInState: onChainResult.alreadyInState,
+      }
     });
   } catch (err) {
     logger.error(
@@ -193,7 +216,9 @@ router.post('/pause-escrow', async (req, res) => {
  *       500:
  *         description: Failed to persist pause state
  *       503:
- *         description: Redis unavailable — the pause did not take effect
+ *         description: Redis unavailable — the on-chain pause succeeded, but off-chain persistence failed.
+ *       502:
+ *         description: Failed to confirm on-chain pause
  */
 router.post('/defensive-pause', async (req, res) => {
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.slice(0, 200) : null;
@@ -204,6 +229,17 @@ router.post('/defensive-pause', async (req, res) => {
     // opens the circuit. The sentinel is an automated detector, so giving it a
     // close path would let a single forged call undo an emergency pause.
     const result = await setEscrowPaused(true);
+    const onChainResult = await setEscrowContractPaused(true);
+
+    if (onChainResult.error) {
+      const redisStatus = result.persisted === false ? 'failed off-chain' : 'processed in Redis';
+      return res.status(502).json({
+        error: `Defensive pause ${redisStatus}, but on-chain pause failed.`,
+        onChainError: onChainResult.error,
+        paused: result.paused,
+        persisted: result.persisted !== false,
+      });
+    }
 
     // Redis was unavailable, so the defensive pause was not persisted. Escrow
     // submissions are still refused (isEscrowPaused() fails closed while Redis
@@ -212,12 +248,13 @@ router.post('/defensive-pause', async (req, res) => {
     if (result.persisted === false) {
       logger.error(
         { event: 'DEFENSIVE_PAUSE_NOT_PERSISTED', source: 'security-sentinel', reason, txHash },
-        '[internal] Defensive pause could not be persisted — escrow is NOT paused.'
+        '[internal] Defensive pause failed off-chain. Contract IS paused on-chain, but backend submissions will revert.'
       );
       return res.status(503).json({
-        error: 'Defensive pause was not persisted; escrow is not paused.',
-        paused: false,
+        error: 'Defensive pause succeeded on-chain, but Redis is down. Backend submissions will revert.',
+        paused: true,
         persisted: false,
+        onChain: { success: true, txHash: onChainResult.txHash }
       });
     }
 
@@ -236,6 +273,11 @@ router.post('/defensive-pause', async (req, res) => {
       updatedAt: result.updatedAt,
       persisted: result.persisted !== false,
       source: 'security-sentinel',
+      onChain: {
+        success: true,
+        txHash: onChainResult.txHash,
+        alreadyInState: onChainResult.alreadyInState,
+      }
     });
   } catch (err) {
     logger.error(

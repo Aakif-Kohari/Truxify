@@ -5,7 +5,7 @@
  * This deters competitors from reverse-engineering the proprietary ML pricing model.
  */
 import logger from '../middleware/logger.js';
-import { supabase } from '../config/supabase.js';
+import { supabase } from '../config/db.js';
 
 const OBSCURATION_CONFIG = {
     MIN_NOISE_PERCENT: 0.01, // 1%
