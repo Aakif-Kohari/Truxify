@@ -43,8 +43,6 @@ class GNNRouteModel(nn.Module):
             self.conv2 = GATConv(hidden_dim, hidden_dim, heads=4, concat=True)
         self.conv3 = SAGEConv(hidden_dim * 4, hidden_dim)
         
-        # Attention mechanism
-        self.attention = nn.MultiheadAttention(hidden_dim, num_heads=8)
         
         # Output layers
         self.lin1 = nn.Linear(hidden_dim, output_dim)
@@ -432,7 +430,11 @@ class RouteOptimizer:
     def load_model(self, path='models/gnn_route.pth'):
         """Load GNN model"""
         self.model = GNNRouteModel().to(self.device)
-        self.model.load_state_dict(torch.load(path, map_location=self.device))
+        state_dict = torch.load(path, map_location=self.device)
+        for key in list(state_dict):
+            if key.startswith('attention.'):
+                del state_dict[key]
+        self.model.load_state_dict(state_dict)
         self.model.eval()
         logger.info(f"✅ Model loaded from {path}")
 
