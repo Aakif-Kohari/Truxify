@@ -84,6 +84,7 @@ export class W3cCredentialIssuer {
     statusIndexStorePath = process.env.TRUXIFY_VC_STATUS_INDEX_FILE || DEFAULT_STATUS_INDEX_FILE
   ) {
     this.statusIndexStore = new StatusListIndexStore(statusIndexStorePath);
+
     if (!privateKeyPem) {
       if (process.env.NODE_ENV === 'production') {
         throw new Error('TRUXIFY_VC_PRIVATE_KEY is required in production; refusing to generate an ephemeral issuer key.');
@@ -103,31 +104,31 @@ export class W3cCredentialIssuer {
     const statusListIndex = this.statusIndexStore.allocate();
     const issuanceDate = new Date().toISOString();
     const vc = {
-      '@context': [
-        'https://www.w3.org/2018/credentials/v1',
-        'https://schema.org'
+      "@context": [
+        "https://www.w3.org/2018/credentials/v1",
+        "https://schema.org"
       ],
-      id: `urn:uuid:${crypto.randomUUID()}`,
-      type: ['VerifiableCredential', 'DriverLicenseCredential'],
-      issuer: 'did:truxify:authority',
-      issuanceDate,
-      credentialSubject: {
-        id: `did:truxify:${driverId}`,
+      "id": `urn:uuid:${crypto.randomUUID()}`,
+      "type": ["VerifiableCredential", "DriverLicenseCredential"],
+      "issuer": "did:truxify:authority",
+      "issuanceDate": issuanceDate,
+      "credentialSubject": {
+        "id": `did:truxify:${driverId}`,
         ...attributes
       },
-      credentialStatus: {
-        id: `https://api.truxify.com/status/list/2021#${statusListIndex}`,
-        type: 'StatusList2021Entry',
-        statusPurpose: 'revocation',
-        statusListIndex: String(statusListIndex)
+      "credentialStatus": {
+        "id": `https://api.truxify.com/status/list/2021#${statusListIndex}`,
+        "type": "StatusList2021Entry",
+        "statusPurpose": "revocation",
+        "statusListIndex": String(statusListIndex)
       }
     };
 
     const signedProof = {
-      type: PROOF_TYPE,
-      created: issuanceDate,
-      verificationMethod: VERIFICATION_METHOD,
-      proofPurpose: PROOF_PURPOSE
+      "type": PROOF_TYPE,
+      "created": issuanceDate,
+      "verificationMethod": VERIFICATION_METHOD,
+      "proofPurpose": PROOF_PURPOSE
     };
 
     const signature = crypto.sign(
@@ -138,7 +139,7 @@ export class W3cCredentialIssuer {
 
     vc.proof = {
       ...signedProof,
-      proofValue: signature
+      "proofValue": signature
     };
 
     return vc;
@@ -151,10 +152,7 @@ export class W3cCredentialIssuer {
 
     const proofKeys = Object.keys(vc.proof).sort();
     const expectedKeys = [...SIGNED_PROOF_FIELDS, 'proofValue'].sort();
-    if (
-      proofKeys.length !== expectedKeys.length ||
-      !proofKeys.every((key, index) => key === expectedKeys[index])
-    ) {
+    if (proofKeys.length !== expectedKeys.length || !proofKeys.every((key, index) => key === expectedKeys[index])) {
       return false;
     }
 
