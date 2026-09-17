@@ -55,8 +55,8 @@ export async function getLiveTrafficMultiplier(pickupLat, pickupLng) {
         }
       }
     } else {
-      // No traffic API key -- fall back to a deterministic rush-hour multiplier.
-      multiplier = getRushHourMultiplier(new Date());
+      // No traffic API key -- return baseline 1.0 (no mock surge applied to pricing).
+      multiplier = 1.0;
     }
 
     if (multiplier > 1.0) {
