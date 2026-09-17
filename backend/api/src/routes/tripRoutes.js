@@ -665,6 +665,10 @@ function canAccessTrip(user, trip) {
 // orders.order_display_id or an orders.id. Returns { trip }, { order } or
 // { error }.
 async function findTripContext(ref) {
+  if (!ref || typeof ref !== 'string' || ref.trim().length === 0 || ref.length > 100) {
+    return { error: { status: 400, message: 'Invalid or malformed trip reference identifier.' } };
+  }
+
   let { data: trip, error: tripErr } = await supabaseAdmin
     .from('trips')
     .select('id, trip_display_id, driver_id, order_id, status')
