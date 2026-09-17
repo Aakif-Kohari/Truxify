@@ -99,6 +99,19 @@ describe('getTimeoutMs', async () => {
     process.env.NOMINATIM_TIMEOUT_MS = '-Infinity';
     expect(getTimeoutMs()).toBe(5000);
   });
+
+  it('guards against null, undefined, NaN, and non-numeric argument values directly', async () => {
+    const { getTimeoutMs } = await import('../../../src/lib/reverseGeocode.js');
+    expect(getTimeoutMs(null)).toBe(5000);
+    expect(getTimeoutMs(undefined)).toBe(5000);
+    expect(getTimeoutMs(NaN)).toBe(5000);
+    expect(getTimeoutMs('NaN')).toBe(5000);
+    expect(getTimeoutMs('invalid')).toBe(5000);
+    expect(getTimeoutMs(-100)).toBe(5000);
+    expect(getTimeoutMs(0)).toBe(5000);
+    expect(getTimeoutMs(3500)).toBe(3500);
+    expect(getTimeoutMs('3500')).toBe(3500);
+  });
 });
 
 describe('Reverse Geocode Utility (Issue #14036)', () => {

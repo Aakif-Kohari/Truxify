@@ -43,8 +43,6 @@ class GNNRouteModel(nn.Module):
             self.conv2 = GATConv(hidden_dim, hidden_dim, heads=4, concat=True)
         self.conv3 = SAGEConv(hidden_dim * 4, hidden_dim)
         
-        # Attention mechanism
-        self.attention = nn.MultiheadAttention(hidden_dim, num_heads=8)
         
         # Output layers
         self.lin1 = nn.Linear(hidden_dim, output_dim)
@@ -99,16 +97,16 @@ class GNNRouteModel(nn.Module):
 RouteGNN = GNNRouteModel
 
 class GraphNetworkBuilder:
-    """Build road network graphs for GNN."""
+    """Build directed road network graphs for GNN route optimization."""
     
     def __init__(self):
-        """Initialize empty road network graph and feature mappings."""
-        self.graph = nx.Graph()
+        """Initialize a directed road network graph and feature mappings."""
+        self.graph = nx.DiGraph()
         self.node_features = {}
         self.edge_features = {}
         
     def build_road_network(self, nodes, edges):
-        """Build road network from nodes and edges"""
+        """Build road network from nodes and directed source-to-target edges."""
         # Add nodes
         for node in nodes:
             self.graph.add_node(
@@ -169,10 +167,19 @@ class GraphNetworkBuilder:
 
         self.node_map = node_map
 
+        if edge_indices:
+            edge_index = torch.tensor(
+                edge_indices, dtype=torch.long
+            ).t().contiguous()
+            edge_attr = torch.tensor(edge_features, dtype=torch.float)
+        else:
+            edge_index = torch.empty((2, 0), dtype=torch.long)
+            edge_attr = torch.empty((0, GNN_EDGE_FEATURE_DIM), dtype=torch.float)
+
         return {
             'node_features': torch.tensor(node_features, dtype=torch.float),
-            'edge_indices': torch.tensor(edge_indices, dtype=torch.long).t().contiguous(),
-            'edge_features': torch.tensor(edge_features, dtype=torch.float)
+            'edge_indices': edge_index,
+            'edge_features': edge_attr
         }
     
     def _road_type_encoding(self, road_type):
@@ -313,7 +320,9 @@ class RouteOptimizer:
 
             return self._calculate_score(embeddings, u, v, objectives, graph_data, node_map)
 
-        max_time = constraints.get('max_time') or constraints.get('hos_limit')
+        max_time = constraints.get('max_time')
+        if max_time is None:
+            max_time = constraints.get('hos_limit')
         path = None
 
         if max_time is not None:
@@ -409,12 +418,9 @@ class RouteOptimizer:
         # Non-negative weight guard for Dijkstra
         return max(score, 1e-6)
     
-    def train(self, train_data, val_data=None, epochs=100):
+    def train(self, train_data, val_data=None, epochs=100, learning_rate=0.001):
         """Train GNN model"""
-        if not train_data or len(train_data) == 0:
-            raise ValueError("Training dataset cannot be empty")
-
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         criterion = nn.MSELoss()
         
         avg_loss = 0.0
@@ -458,7 +464,11 @@ class RouteOptimizer:
     def load_model(self, path='models/gnn_route.pth'):
         """Load GNN model"""
         self.model = GNNRouteModel().to(self.device)
-        self.model.load_state_dict(torch.load(path, map_location=self.device))
+        state_dict = torch.load(path, map_location=self.device)
+        for key in list(state_dict):
+            if key.startswith('attention.'):
+                del state_dict[key]
+        self.model.load_state_dict(state_dict)
         self.model.eval()
         self.is_trained = True
         logger.info(f"✅ Model loaded from {path}")
