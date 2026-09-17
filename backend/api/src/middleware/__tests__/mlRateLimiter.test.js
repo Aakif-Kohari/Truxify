@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TokenBucketRateLimiter } from '../mlRateLimiter.js';
 
-const mockRedisClient = {
-    isReady: true,
-    eval: vi.fn()
-};
+const { mockRedisClient } = vi.hoisted(() => ({
+    mockRedisClient: {
+        status: 'ready',
+        isReady: true,
+        eval: vi.fn()
+    }
+}));
 
 vi.mock('../../config/db.js', () => ({
     redisClient: mockRedisClient
@@ -88,6 +91,7 @@ describe('TokenBucketRateLimiter', () => {
 
     it('should enforce in-memory rate limit when Redis is unavailable', async () => {
         mockRedisClient.isReady = false;
+        mockRedisClient.status = 'end';
 
         // First request should pass
         await limiter.consume(req, res, next);

@@ -35,6 +35,7 @@ contract ZKCP is Ownable {
         uint256 _refundDuration
     ) external payable {
         require(msg.value > 0, "Locked value must be > 0");
+        require(_dataHashCommitment != bytes32(0), "Data hash commitment required");
         require(agreements[_agreementId].buyer == address(0), "Agreement ID already exists");
 
         agreements[_agreementId] = EscrowAgreement({
@@ -43,6 +44,7 @@ contract ZKCP is Ownable {
             amount: msg.value,
             dataHashCommitment: _dataHashCommitment,
             refundTimelock: block.timestamp + _refundDuration,
+            keyRevealed: false,
             completed: false
         });
 

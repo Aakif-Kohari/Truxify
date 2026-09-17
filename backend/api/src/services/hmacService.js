@@ -1,10 +1,28 @@
 import crypto from 'crypto';
 
-const HMAC_SECRET = process.env.HMAC_SECRET || 'default-hmac-secret-key';
+const MIN_HMAC_SECRET_BYTES = 32;
 const MAX_TIMESTAMP_DIFF_MS = 5 * 60 * 1000; // 5 minutes tolerance
 const usedNonces = new Set();
 
-// In production, replace this in-memory Set with Redis to support multi-instance deployments
+const getHmacSecret = () => {
+  const secret = process.env.HMAC_SECRET;
+  if (!secret) {
+    throw new Error('HMAC_SECRET is required; refusing to sign or verify HMAC requests without a configured secret.');
+  }
+
+  if (Buffer.byteLength(secret, 'utf8') < MIN_HMAC_SECRET_BYTES) {
+    throw new Error(`HMAC_SECRET must contain at least ${MIN_HMAC_SECRET_BYTES} bytes.`);
+  }
+
+  return secret;
+};
+
+// Fail during application startup in production rather than silently running
+// with an insecure or missing authentication secret.
+if (process.env.NODE_ENV === 'production') {
+  getHmacSecret();
+}
+
 export const isNonceValid = (nonce) => {
   if (usedNonces.has(nonce)) {
     return false;
@@ -21,7 +39,7 @@ export const isTimestampValid = (timestamp) => {
 
 export const generateSignature = (payload, timestamp, nonce) => {
   const dataToSign = `${timestamp}.${nonce}.${payload}`;
-  return crypto.createHmac('sha256', HMAC_SECRET).update(dataToSign).digest('hex');
+  return crypto.createHmac('sha256', getHmacSecret()).update(dataToSign).digest('hex');
 };
 
 export const verifySignature = (signature, payload, timestamp, nonce) => {

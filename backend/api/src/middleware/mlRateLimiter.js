@@ -27,7 +27,7 @@ class TokenBucketRateLimiter {
         const now = Date.now();
 
         // If Redis is available, use distributed rate limiting
-        if (redisClient && redisClient.isReady) {
+        if (redisClient && (redisClient.status === 'ready' || redisClient.isReady)) {
             try {
                 const luaScript = `
           local key = KEYS[1]
