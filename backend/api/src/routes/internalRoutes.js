@@ -22,6 +22,7 @@
 
 import express from 'express';
 import logger from '../middleware/logger.js';
+import { requireEscrowOperatorKey } from '../middleware/apiKey.js';
 import { supabase, supabaseAdmin } from '../config/db.js';
 import {
   setEscrowPaused,
@@ -143,7 +144,7 @@ router.get('/escrow-velocity', async (req, res) => {
  *       500:
  *         description: Failed to persist pause state
  */
-router.post('/pause-escrow', async (req, res) => {
+router.post('/pause-escrow', requireEscrowOperatorKey, async (req, res) => {
   try {
     const raw = req.body?.paused;
     const unpause = raw === false || raw === 'false' || raw === 0 || raw === '0' || raw === null;

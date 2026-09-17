@@ -45,8 +45,13 @@ import internalRoutes from '../../src/routes/internalRoutes.js';
 import { requireApiKey, authConfig } from '../../src/middleware/apiKey.js';
 
 function buildApp() {
+  process.env.ESCROW_OPERATOR_API_KEYS = VALID_KEY;
   const app = express();
   app.use(express.json());
+  app.use('/api/internal', (req, _res, next) => {
+    req.apiKeyMetadata = { rawKey: VALID_KEY };
+    next();
+  });
   app.use('/api/internal', internalRoutes);
   return app;
 }
@@ -61,8 +66,9 @@ const VALID_KEY = 'internal-test-key';
  * so the auth assertions below exercise the middleware that actually guards
  * these routes in production rather than a stand-in.
  */
-function buildGuardedApp() {
-  process.env.VALID_API_KEYS = VALID_KEY;
+function buildGuardedApp(keys = VALID_KEY, operatorKey = VALID_KEY) {
+  process.env.VALID_API_KEYS = keys;
+  process.env.ESCROW_OPERATOR_API_KEYS = operatorKey;
   authConfig.reload();
   const app = express();
   app.use(express.json());
@@ -157,6 +163,16 @@ describe('POST /api/internal/pause-escrow', () => {
     expect(circuitBreakerMock.setEscrowPaused).toHaveBeenCalledWith(false);
     expect(res.status).toBe(200);
     expect(res.body.paused).toBe(false);
+  });
+
+  it('rejects a valid non-operator API key', async () => {
+    const res = await request(buildGuardedApp(`${VALID_KEY},reader-key`))
+      .post('/api/internal/pause-escrow')
+      .set('x-api-key', 'reader-key')
+      .send({ paused: false });
+
+    expect(res.status).toBe(403);
+    expect(circuitBreakerMock.setEscrowPaused).not.toHaveBeenCalled();
   });
 });
 
