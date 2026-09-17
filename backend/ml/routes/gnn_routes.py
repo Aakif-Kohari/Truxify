@@ -70,7 +70,7 @@ async def build_graph(nodes: List[Node], edges: List[Edge]):
             'data': {
                 'nodes': len(graph.nodes),
                 'edges': len(graph.edges),
-                'is_connected': nx.is_connected(graph)
+                'is_connected': nx.is_weakly_connected(graph)
             },
             'timestamp': datetime.now().isoformat()
         }
@@ -84,16 +84,13 @@ async def build_graph(nodes: List[Node], edges: List[Edge]):
 async def optimize_route(request: RouteRequest):
     """Optimize route using GNN"""
     try:
-        # Build graph
         graph = builder.build_road_network(
             [node.dict() for node in request.nodes],
             [edge.dict() for edge in request.edges]
         )
         
-        # Get PyTorch data
         graph_data = builder.get_pytorch_data()
         
-        # Optimize route
         result = optimizer.optimize_route(
             request.start_node,
             request.end_node,
@@ -124,7 +121,6 @@ async def optimize_route(request: RouteRequest):
 async def multi_objective_optimize(request: RouteRequest):
     """Multi-objective route optimization"""
     try:
-        # Build graph
         graph = builder.build_road_network(
             [node.dict() for node in request.nodes],
             [edge.dict() for edge in request.edges]
@@ -161,7 +157,6 @@ async def multi_objective_optimize(request: RouteRequest):
 async def train_model(request: TrainRequest):
     """Train GNN model"""
     try:
-        # In production: load training data
         train_data = []
         val_data = []
         

@@ -99,16 +99,16 @@ class GNNRouteModel(nn.Module):
 RouteGNN = GNNRouteModel
 
 class GraphNetworkBuilder:
-    """Build road network graphs for GNN."""
+    """Build directed road network graphs for GNN route optimization."""
     
     def __init__(self):
-        """Initialize empty road network graph and feature mappings."""
-        self.graph = nx.Graph()
+        """Initialize a directed road network graph and feature mappings."""
+        self.graph = nx.DiGraph()
         self.node_features = {}
         self.edge_features = {}
         
     def build_road_network(self, nodes, edges):
-        """Build road network from nodes and edges"""
+        """Build road network from nodes and directed source-to-target edges."""
         # Add nodes
         for node in nodes:
             self.graph.add_node(
