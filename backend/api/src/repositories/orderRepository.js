@@ -156,17 +156,7 @@ export class OrderRepository {
           p_idempotency_key: idempotencyKey || null,
         }).single();
 
-        if (!rpcResult.error || (rpcResult.error.code !== 'PGRST202' && !rpcResult.error.message?.includes('order_update_with_outbox'))) {
-          return rpcResult;
-        }
-
-        // Fallback for unmigrated test/local environments
-        return supabaseClient
-          .from('orders')
-          .update(updates)
-          .eq('id', id)
-          .select('*')
-          .single();
+        return rpcResult;
       }, 'updateOrder:transactional');
     }
 
@@ -648,7 +638,17 @@ export class OrderRepository {
         .order('id', { ascending: true });
 
       if (after) {
-        query = query.gt('updated_at', after);
+        if (typeof after === 'object' && after.updated_at && after.id) {
+          query = query.or(`updated_at.gt.${after.updated_at},and(updated_at.eq.${after.updated_at},id.gt.${after.id})`);
+        } else if (typeof after === 'string' && after.includes(',')) {
+          const [ts, idVal] = after.split(',');
+          query = query.or(`updated_at.gt.${ts},and(updated_at.eq.${ts},id.gt.${idVal})`);
+        } else if (typeof after === 'string' && after.includes('|')) {
+          const [ts, idVal] = after.split('|');
+          query = query.or(`updated_at.gt.${ts},and(updated_at.eq.${ts},id.gt.${idVal})`);
+        } else {
+          query = query.gt('updated_at', after);
+        }
       }
 
       if (typeof limit === 'number') {

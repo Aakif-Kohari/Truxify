@@ -70,14 +70,32 @@ BEGIN
     RAISE EXCEPTION 'Unauthorized to execute order_update_with_outbox';
   END IF;
 
-  -- 1. Lock existing order row
+  -- 1. Idempotency pre-check: if idempotency key already exists, return current order without re-applying updates
+  IF p_idempotency_key IS NOT NULL AND TRIM(p_idempotency_key) <> '' THEN
+    IF EXISTS (SELECT 1 FROM public.outbox_events WHERE idempotency_key = p_idempotency_key) THEN
+      SELECT * INTO v_order FROM public.orders WHERE id = p_order_id;
+      IF v_order.id IS NOT NULL THEN
+        RETURN NEXT v_order;
+      END IF;
+      RETURN;
+    END IF;
+  END IF;
+
+  -- 2. Lock existing order row
   SELECT * INTO v_order FROM public.orders WHERE id = p_order_id FOR UPDATE;
 
   IF v_order.id IS NULL THEN
     RETURN;
   END IF;
 
-  -- 2. Update order row fields from p_updates
+  -- 3. Enforce order ownership for authenticated callers (prevent IDOR CWE-639)
+  IF auth.role() = 'authenticated' AND auth.uid() IS NOT NULL THEN
+    IF v_order.customer_id <> auth.uid() AND (v_order.driver_id IS NULL OR v_order.driver_id <> auth.uid()) THEN
+      RAISE EXCEPTION 'Unauthorized: Caller does not own order %', p_order_id;
+    END IF;
+  END IF;
+
+  -- 4. Update order row fields from p_updates
   UPDATE public.orders
      SET status                         = CASE WHEN p_updates ? 'status' THEN (p_updates->>'status') ELSE orders.status END,
          driver_id                      = CASE WHEN p_updates ? 'driver_id' THEN (p_updates->>'driver_id')::uuid ELSE orders.driver_id END,
@@ -97,7 +115,7 @@ BEGIN
          blockchain_tx_hash             = CASE WHEN p_updates ? 'blockchain_tx_hash' THEN (p_updates->>'blockchain_tx_hash') ELSE orders.blockchain_tx_hash END,
          cancellation_reason            = CASE WHEN p_updates ? 'cancellation_reason' THEN (p_updates->>'cancellation_reason') ELSE orders.cancellation_reason END,
          cancellation_fee               = CASE WHEN p_updates ? 'cancellation_fee' THEN (p_updates->>'cancellation_fee')::numeric ELSE orders.cancellation_fee END,
-         pending_bid_acceptance         = CASE WHEN p_updates ? 'pending_bid_acceptance' THEN (p_updates->'pending_bid_acceptance') ELSE orders.pending_bid_acceptance END,
+         pending_bid_acceptance         = CASE WHEN p_updates ? 'pending_bid_acceptance' THEN NULLIF(p_updates->'pending_bid_acceptance', 'null'::jsonb) ELSE orders.pending_bid_acceptance END,
          reconciled_at                  = CASE WHEN p_updates ? 'reconciled_at' THEN (p_updates->>'reconciled_at')::timestamptz ELSE orders.reconciled_at END,
          updated_at                     = NOW()
    WHERE id = p_order_id

@@ -370,4 +370,52 @@ describe('OrderRepository.updateOrder transactional outbox (#11215)', () => {
     expect(fromCalled).toBe(true);
     expect(mockClient.rpc).not.toHaveBeenCalled();
   });
+
+  it('never falls back to direct table update when eventType is provided even on missing-RPC PGRST202 error', async () => {
+    const mockClient = {
+      rpc: vi.fn(() => ({
+        single: vi.fn().mockResolvedValue({
+          data: null,
+          error: { message: 'function order_update_with_outbox does not exist', code: 'PGRST202' },
+        }),
+      })),
+      from: vi.fn(),
+    };
+
+    const repo = new OrderRepository(mockClient);
+    const result = await repo.updateOrder(ORDER_ID, { status: 'cancelled' }, 'ORDER_CANCELLED');
+
+    expect(result.data).toBeNull();
+    expect(result.error).toBeDefined();
+    expect(result.error.code).toBe('PGRST202');
+    // Ensure no fallback occurred to preserve transactional-only guarantees
+    expect(mockClient.from).not.toHaveBeenCalled();
+  });
+
+  describe('findStaleFundingOrders composite cursor', () => {
+    it('applies composite or filter when after contains updated_at and id', async () => {
+      const mockChain = {
+        select: vi.fn(() => mockChain),
+        eq: vi.fn(() => mockChain),
+        not: vi.fn(() => mockChain),
+        or: vi.fn(() => mockChain),
+        order: vi.fn(() => mockChain),
+        limit: vi.fn(() => mockChain),
+      };
+
+      const mockClient = {
+        from: vi.fn(() => mockChain),
+      };
+
+      const repo = new OrderRepository(mockClient);
+      const cutoff = '2026-09-17T00:00:00.000Z';
+      const cursor = { updated_at: '2026-09-17T01:00:00.000Z', id: '11111111-2222-3333-4444-555555555555' };
+
+      await repo.findStaleFundingOrders(cutoff, { after: cursor, limit: 100 });
+
+      expect(mockChain.or).toHaveBeenCalledWith(
+        `updated_at.gt.${cursor.updated_at},and(updated_at.eq.${cursor.updated_at},id.gt.${cursor.id})`
+      );
+    });
+  });
 });
