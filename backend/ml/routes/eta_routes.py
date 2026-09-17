@@ -170,10 +170,12 @@ async def predict_eta(request: ETARequest, _auth=Depends(verify_api_key)):
             # The LSTM is trained on traffic_speed (m/s) (see train_model), so
             # its raw output is a predicted speed, not a duration. Keep the
             # dimension explicit and convert it to seconds below.
+            route_signature = TrafficPipeline.build_route_signature(destination)
             predicted_speed_mps = await run_inference(
                 traffic_pipeline.predict_eta,
                 features,
-                f"order_{request.order_id}"
+                f"order_{request.order_id}",
+                route_signature,
             )
 
             if predicted_speed_mps:

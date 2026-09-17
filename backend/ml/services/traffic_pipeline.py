@@ -2,6 +2,7 @@ import requests
 import json
 import asyncio
 import aiohttp
+import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import numpy as np
@@ -86,8 +87,23 @@ class TrafficPipeline:
         # (issue #11666).
         self._route_windows = OrderedDict()
         self._max_route_windows = self.MAX_ROUTE_WINDOWS
+        self._last_route_history_metrics = {
+            'route_id': None,
+            'route_signature': None,
+            'route_key': None,
+        }
         self._osrm_failure_count = 0
         self._osrm_circuit_open = False
+
+    @staticmethod
+    def build_route_signature(destination: Dict) -> str:
+        """Build a stable route version from the authoritative destination."""
+        payload = f"{float(destination['lat']):.7f},{float(destination['lng']):.7f}"
+        return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
+
+    def get_route_history_metrics(self) -> Dict[str, Optional[str]]:
+        """Return the route identity used for the most recent prediction."""
+        return dict(self._last_route_history_metrics)
 
     def close(self):
         """Dispose DB connection pool and close Redis connection.
@@ -354,15 +370,13 @@ class TrafficPipeline:
             return json.loads(cached)
         return None
     
-    def predict_eta(self, route_data: np.ndarray, route_id: Optional[str] = None) -> float:
-        """Predict ETA using LSTM model.
-
-        Feeds a genuine rolling window of the last 60 observations for the
-        route (padded at the front by repeating the earliest observation during
-        warm-up) instead of tiling a single row into a constant sequence, which
-        was out of distribution for the model trained on diverse consecutive
-        speeds (issue #11666).
-        """
+    def predict_eta(
+        self,
+        route_data: np.ndarray,
+        route_id: Optional[str] = None,
+        route_signature: Optional[str] = None,
+    ) -> float:
+        """Predict ETA using an order-specific rolling history."""
         try:
             if route_data.ndim == 1:
                 route_data = route_data.reshape(1, -1)
@@ -370,7 +384,18 @@ class TrafficPipeline:
                 logger.error(f"Prediction failed: expected 5 features, got {route_data.shape[1]}")
                 return None
 
-            route_key = route_id or ""
+            base_route_key = route_id or ""
+            route_key = (
+                f"{base_route_key}:{route_signature}"
+                if route_signature
+                else base_route_key
+            )
+            self._last_route_history_metrics = {
+                'route_id': base_route_key or None,
+                'route_signature': route_signature,
+                'route_key': route_key,
+            }
+
             window = self._route_windows.get(route_key)
             if window is None:
                 if len(self._route_windows) >= self._max_route_windows:
@@ -487,9 +512,11 @@ class TrafficPipeline:
                 # speed into an ETA in seconds using the route distance so the
                 # value is meaningful as a travel time. The rolling window is
                 # keyed by the order's route id (issue #11666).
+                route_signature = self.build_route_signature(destination)
                 predicted_speed_mps = self.predict_eta(
                     features,
-                    f"order_{order_id}"
+                    f"order_{order_id}",
+                    route_signature
                 )
 
                 if predicted_speed_mps is not None:
