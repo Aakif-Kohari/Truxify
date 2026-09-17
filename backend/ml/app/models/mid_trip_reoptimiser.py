@@ -1,7 +1,7 @@
 import logging
 import math
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from app.utils.osrm_client import get_route_matrix_with_duration
 
@@ -244,14 +244,6 @@ def find_mid_trip_loads(
                     duration_matrix,
                 )
             )
-
-            pickup_to_dropoff_distance = distance_matrix[pickup_idx][dropoff_idx]
-            load_trip_distance = pickup_route_distance + pickup_to_dropoff_distance
-            if (
-                load_trip_distance > 0
-                and detour_km / load_trip_distance > 0.5
-            ):
-                continue
 
             deadline_dt = datetime.fromisoformat(load.get("pickup_deadline", ""))
             if deadline_dt.tzinfo is None:
