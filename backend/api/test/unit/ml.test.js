@@ -157,7 +157,7 @@ describe('services/ml.js Unit Tests', () => {
         text: async () => 'Server Error',
       };
       await expect(handleResponse(mockRes, 'http://test/fail', 'GET')).rejects.toThrow(
-        /Request failed \(500\): GET http:\/\/test\/fail - Server Error/
+        /\[ML\] Request failed: GET http:\/\/test\/fail 500 - Server Error/
       );
     });
 
