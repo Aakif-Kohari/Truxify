@@ -18,6 +18,7 @@ try:
 except ImportError:
     tf = None
     keras = None
+    layers = None
     models = None
     HAS_TF = False
 import redis
@@ -137,7 +138,11 @@ class TrafficPipeline:
             pass
         
     def _load_or_create_model(self):
-        """Load existing LSTM model or create new"""
+        """Load existing LSTM model or create new, when TensorFlow is available."""
+        if not HAS_TF:
+            logger.warning("TensorFlow is unavailable; ETA model features are disabled")
+            return None
+
         model_path = 'models/eta_lstm.h5'
         if os.path.exists(model_path):
             logger.info("Loading existing LSTM model")
@@ -147,7 +152,10 @@ class TrafficPipeline:
             return self._create_lstm_model()
 
     def _create_lstm_model(self):
-        """Create LSTM model for ETA prediction"""
+        """Create LSTM model for ETA prediction."""
+        if not HAS_TF:
+            return None
+
         model = models.Sequential([
             layers.LSTM(64, input_shape=(60, 5), return_sequences=True),
             layers.Dropout(0.2),
@@ -378,6 +386,9 @@ class TrafficPipeline:
     ) -> float:
         """Predict ETA using an order-specific rolling history."""
         try:
+            if self.model is None:
+                logger.warning("ETA prediction unavailable because TensorFlow model is not loaded")
+                return None
             if route_data.ndim == 1:
                 route_data = route_data.reshape(1, -1)
             if route_data.shape[1] != 5:
@@ -422,6 +433,10 @@ class TrafficPipeline:
     
     def train_model(self, epochs=50, batch_size=32):
         """Train LSTM model on historical data"""
+        if self.model is None:
+            logger.warning("ETA training unavailable because TensorFlow is not installed")
+            return
+
         session = self.Session()
         try:
             data = session.query(TrafficData).all()
@@ -461,15 +476,42 @@ class TrafficPipeline:
             logger.warning("Not enough per-route data for training")
             return
 
-        X = np.concatenate(X_parts, axis=0)
-        y = np.concatenate(y_parts, axis=0)
+        X_train_parts, y_train_parts = [], []
+        X_val_parts, y_val_parts = [], []
+        validation_fraction = 0.2
+
+        for X_route, y_route in zip(X_parts, y_parts):
+            if len(X_route) < 2:
+                continue
+
+            validation_count = max(1, int(np.ceil(len(X_route) * validation_fraction)))
+            split_index = len(X_route) - validation_count
+            if split_index < 1:
+                continue
+
+            X_train_parts.append(X_route[:split_index])
+            y_train_parts.append(y_route[:split_index])
+            X_val_parts.append(X_route[split_index:])
+            y_val_parts.append(y_route[split_index:])
+
+        if not X_train_parts or not X_val_parts:
+            logger.warning("Not enough per-route data for deterministic validation")
+            return
+
+        X_train = np.concatenate(X_train_parts, axis=0)
+        y_train = np.concatenate(y_train_parts, axis=0)
+        X_val = np.concatenate(X_val_parts, axis=0)
+        y_val = np.concatenate(y_val_parts, axis=0)
         
-        # Train
+        # Train with an explicit temporal holdout from every eligible route.
+        # This avoids Keras selecting the last 20% of the combined route array,
+        # which can make validation depend on route ordering rather than time.
         self.model.fit(
-            X, y,
+            X_train,
+            y_train,
             epochs=epochs,
             batch_size=batch_size,
-            validation_split=0.2,
+            validation_data=(X_val, y_val),
             verbose=1
         )
         
