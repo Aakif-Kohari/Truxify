@@ -1,30 +1,41 @@
-"""
-Regression tests for the LLM model-loading trust boundary.
-"""
+"""Regression tests for the LLM model-loading trust boundary."""
 
 from pathlib import Path
 import ast
 import re
 
 
+def _resolve_literal_assignment(tree: ast.Module, name: str):
+    assignments = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                assignments[target.id] = node.value
+
+    value = assignments[name]
+    if isinstance(value, ast.Dict):
+        resolved = {}
+        for key_node, value_node in zip(value.keys, value.values):
+            if isinstance(key_node, ast.Name):
+                key = ast.literal_eval(assignments[key_node.id])
+            else:
+                key = ast.literal_eval(key_node)
+            resolved[key] = ast.literal_eval(value_node)
+        return resolved
+
+    return ast.literal_eval(value)
+
+
 def test_llm_model_is_allowlisted_and_pinned():
     source = Path(__file__).with_name("llm_service.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
 
-    revisions_assignment = next(
-        node for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name)
-            and target.id == "PINNED_LLM_MODEL_REVISIONS"
-            for target in node.targets
-        )
-    )
-
-    mapping = ast.literal_eval(revisions_assignment.value)
+    mapping = _resolve_literal_assignment(tree, "PINNED_LLM_MODEL_REVISIONS")
     assert mapping == {
         "mistralai/Mistral-7B-Instruct-v0.1":
-            "ec5deb64f2c6e6fa90c1abf74a91d5c93a9669ca"
+            "464c09acb438a06c3a5eaafa25b90069df87efca"
     }
     assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in mapping.values())
 
