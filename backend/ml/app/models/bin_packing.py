@@ -58,20 +58,25 @@ class _Shelf:
         width: float,
         height: float,
         max_height_limit: float | None = None,
+        orientation: List[int] | None = None,
     ) -> dict | None:
         """Attempt to place an item; return position dict or *None*."""
         # Try all six axis-aligned orientations so any package dimension can
         # occupy the truck's length, width, or vertical axis.
         orientations = [
-            (False, length, width, height),
-            (True, width, length, height),
-            (True, length, height, width),
-            (True, height, width, length),
-            (True, width, height, length),
-            (True, height, length, width),
+            # orientation values are original dimension axes in L/W/H order:
+            # 0=length, 1=width, 2=height.
+            ([0, 1, 2], False, length, width, height),
+            ([1, 0, 2], True, width, length, height),
+            ([0, 2, 1], True, length, height, width),
+            ([2, 1, 0], True, height, width, length),
+            ([1, 2, 0], True, width, height, length),
+            ([2, 0, 1], True, height, length, width),
         ]
-        for rotated, l, w, h in orientations:
-            pos = self._fit(l, w, h, rotated, max_height_limit)
+        for orientation, rotated, l, w, h in orientations:
+            pos = self._fit(
+                l, w, h, rotated, orientation, max_height_limit
+            )
             if pos is not None:
                 return pos
         return None
@@ -104,8 +109,8 @@ class _Shelf:
             self.cursor_x += l
             self.row_height = max(self.row_height, w)
             self.shelf_height = max(self.shelf_height, h)
-            self.items.append({"pos": pos, "rotated": rotated})
-            return {**pos, "rotated": rotated}
+            self.items.append({"pos": pos, "rotated": rotated, "orientation": orientation})
+            return {**pos, "rotated": rotated, "orientation": orientation}
 
         # Start a new row inside the same shelf
         new_y = self.cursor_y + self.row_height
@@ -115,8 +120,8 @@ class _Shelf:
             self.row_height = w
             self.shelf_height = max(self.shelf_height, h)
             pos = {"x": 0.0, "y": new_y, "z": self.z_bottom}
-            self.items.append({"pos": pos, "rotated": rotated})
-            return {**pos, "rotated": rotated}
+            self.items.append({"pos": pos, "rotated": rotated, "orientation": orientation})
+            return {**pos, "rotated": rotated, "orientation": orientation}
 
         return None
 
