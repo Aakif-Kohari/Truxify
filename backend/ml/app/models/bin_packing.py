@@ -235,6 +235,38 @@ def _pack_packages(
     return arrangements, sorted(unpacked), utilization
 
 
+def _validate_delivery_addresses(
+    delivery_addresses: List[Dict[str, float]],
+) -> None:
+    """Validate delivery coordinates before any distance calculations."""
+    for index, address in enumerate(delivery_addresses):
+        for axis, lower, upper in (
+            ("lat", -90.0, 90.0),
+            ("lng", -180.0, 180.0),
+        ):
+            if axis not in address:
+                raise ValueError(
+                    f"delivery_addresses[{index}].{axis} is required"
+                )
+
+            value = address[axis]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"delivery_addresses[{index}].{axis} must be a finite number"
+                )
+
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"delivery_addresses[{index}].{axis} must be a finite number"
+                )
+            if not lower <= value <= upper:
+                raise ValueError(
+                    f"delivery_addresses[{index}].{axis} must be between "
+                    f"{lower} and {upper}"
+                )
+
+
 # ---------------------------------------------------------------------------
 # Nearest-neighbour stop sequencing
 # ---------------------------------------------------------------------------
@@ -334,6 +366,8 @@ def optimise_packing(
         )
         while len(delivery_addresses) < len(packages):
             delivery_addresses.append(delivery_addresses[0])
+
+    _validate_delivery_addresses(delivery_addresses)
 
     arrangements, unpacked, utilization = _pack_packages(packages, truck)
 
