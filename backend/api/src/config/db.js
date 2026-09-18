@@ -454,6 +454,19 @@ export function validateConfig() {
     logger.warn(`Missing optional env vars (features disabled): ${missingRecommended.join(', ')}`);
   }
 
+  // JWT_SECRET is only "recommended" so local dev and tests can run without it
+  // — the auth middleware falls back to a built-in default. That default is
+  // public, though, so a production process without JWT_SECRET would let anyone
+  // forge authentication tokens. Refuse to boot in that state instead of
+  // silently accepting forged credentials.
+  if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET?.trim()) {
+    const msg =
+      'JWT_SECRET is required in production. Without it the API falls back to a publicly-known ' +
+      'default secret, which allows authentication-token forgery. Set JWT_SECRET and restart.';
+    logger.error(msg);
+    throw new Error(msg);
+  }
+
   // Pricing rate-card validation
   const pricingVars = [
     'TRUXIFY_RATE_PER_TONNE_KM',
