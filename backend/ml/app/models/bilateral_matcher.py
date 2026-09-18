@@ -8,9 +8,11 @@ and driver rating, then solves the optimal assignment via
 
 import logging
 import math
+import os
 from typing import List, Dict, Any
 
 import numpy as np
+import requests
 from scipy.optimize import linear_sum_assignment
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _EARTH_RADIUS_KM = 6_371.0
+_DEFAULT_OSRM_BASE_URL = "https://router.project-osrm.org"
+_OSRM_TIMEOUT_SECONDS = 1.5
+_FALLBACK_AVG_SPEED_KMH = 50.0
 
 
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -29,6 +34,58 @@ def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlon = lon2 - lon1
     a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
     return 2 * _EARTH_RADIUS_KM * math.asin(math.sqrt(a))
+
+
+def _osrm_enabled() -> bool:
+    return os.getenv("TRUXIFY_ML_USE_OSRM", "true").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _fetch_route_duration_matrix(
+    drivers: List[Dict[str, Any]],
+    loads: List[Dict[str, Any]],
+) -> list[list[float | None]] | None:
+    """Fetch road travel durations from every driver to every load origin."""
+    if not _osrm_enabled() or not drivers or not loads:
+        return None
+
+    coordinates = [
+        f"{driver['current_lng']},{driver['current_lat']}"
+        for driver in drivers
+    ] + [
+        f"{load['origin_lng']},{load['origin_lat']}"
+        for load in loads
+    ]
+    source_indexes = ";".join(str(i) for i in range(len(drivers)))
+    destination_offset = len(drivers)
+    destination_indexes = ";".join(
+        str(destination_offset + i) for i in range(len(loads))
+    )
+    base_url = os.getenv("OSRM_BASE_URL", _DEFAULT_OSRM_BASE_URL).rstrip("/")
+    url = f"{base_url}/table/v1/driving/{';'.join(coordinates)}"
+
+    try:
+        response = requests.get(
+            url,
+            params={
+                "sources": source_indexes,
+                "destinations": destination_indexes,
+                "annotations": "duration",
+            },
+            timeout=_OSRM_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        durations = payload.get("durations") if isinstance(payload, dict) else None
+        if not isinstance(durations, list) or len(durations) != len(drivers):
+            logger.warning("OSRM returned an invalid bilateral duration matrix")
+            return None
+        if any(not isinstance(row, list) or len(row) != len(loads) for row in durations):
+            logger.warning("OSRM returned an invalid bilateral duration row")
+            return None
+        return durations
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        logger.warning("OSRM bilateral duration lookup failed: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -71,13 +128,23 @@ def _dimension_penalty(driver: dict, load: dict) -> float:
     return 0.0
 
 
-def _deadline_urgency(load: dict, distance_km: float) -> float:
+def _deadline_urgency(
+    load: dict,
+    distance_km: float,
+    route_duration_seconds: float | None = None,
+) -> float:
     """Penalise matches where estimated travel time is tight versus deadline.
 
-    Higher cost when the deadline is close relative to distance.
+    Road-network duration is preferred when available. The previous straight-line
+    distance estimate is retained only as an explicit routing-service fallback.
     """
-    avg_speed_kmh = 50.0
-    travel_hours = distance_km / avg_speed_kmh if avg_speed_kmh > 0 else 0.0
+    if route_duration_seconds is not None:
+        if not math.isfinite(route_duration_seconds) or route_duration_seconds < 0:
+            return _PENALTY_INFEASIBLE
+        travel_hours = route_duration_seconds / 3600.0
+    else:
+        travel_hours = distance_km / _FALLBACK_AVG_SPEED_KMH
+
     deadline = load.get("deadline_hours", 72.0)
     if deadline <= 0:
         return _PENALTY_INFEASIBLE
@@ -152,17 +219,28 @@ def match_bilateral(
             "unmatched_drivers": [],
         }
 
+    route_durations = _fetch_route_duration_matrix(drivers, loads)
+
     # Build cost matrix  (rows = loads, cols = drivers)
     cost = np.zeros((n_loads, n_drivers), dtype=np.float64)
 
     for i, load in enumerate(loads):
         for j, driver in enumerate(drivers):
             dist_km = _distance_cost(driver, load)
+            route_duration_seconds = None
+            if route_durations is not None:
+                candidate_duration = route_durations[j][i]
+                if candidate_duration is None:
+                    route_duration_seconds = float("inf")
+                elif isinstance(candidate_duration, (int, float)) and math.isfinite(candidate_duration):
+                    route_duration_seconds = float(candidate_duration)
+                else:
+                    route_duration_seconds = float("inf")
             c = (
                 dist_km / _MAX_DISTANCE_KM * 100.0  # normalised distance
                 + _weight_penalty(driver, load)
                 + _dimension_penalty(driver, load)
-                + _deadline_urgency(load, dist_km)
+                + _deadline_urgency(load, dist_km, route_duration_seconds)
                 + _destination_penalty(driver, load)
                 + _rating_bonus(driver)
             )
