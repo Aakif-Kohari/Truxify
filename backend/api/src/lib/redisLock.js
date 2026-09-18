@@ -446,3 +446,4 @@ class RedisLock {
 
 export default RedisLock;
 
+import crypto from 'crypto';
