@@ -41,6 +41,9 @@ _PENALTY_INFEASIBLE = 1e6   # effectively forbids the pairing
 # so that a negative `_rating_bonus` (−10 for a 5-star driver) cannot pull an
 # infeasible pairing's cost back under the threshold and get it accepted.
 _INFEASIBLE_THRESHOLD = 1e5
+# Assignments at or above this cost are better represented by leaving the
+# load/driver unmatched. This matches the zero-score boundary below.
+_UNMATCHED_COST = 200.0
 
 
 def _distance_cost(driver: dict, load: dict) -> float:
@@ -168,16 +171,29 @@ def match_bilateral(
             )
             cost[i, j] = c
 
-    # Solve assignment (minimise cost)
-    row_idx, col_idx = linear_sum_assignment(cost)
+    # Add explicit dummy rows/columns so the optimizer can choose an unmatched
+    # load or driver instead of being forced to accept a poor finite pairing.
+    size = n_loads + n_drivers
+    assignment_cost = np.zeros((size, size), dtype=np.float64)
+    assignment_cost[:n_loads, :n_drivers] = cost
+    assignment_cost[:n_loads, n_drivers:] = _UNMATCHED_COST
+    assignment_cost[n_loads:, :n_drivers] = _UNMATCHED_COST
+
+    # Solve the augmented assignment problem.
+    row_idx, col_idx = linear_sum_assignment(assignment_cost)
 
     assignments = []
     matched_loads = set()
     matched_drivers = set()
 
     for r, c in zip(row_idx, col_idx):
+        # Dummy row/column assignments represent unmatched entities.
+        if r >= n_loads or c >= n_drivers:
+            continue
         if cost[r, c] >= _INFEASIBLE_THRESHOLD:
             continue  # infeasible pairing – skip
+        if cost[r, c] >= _UNMATCHED_COST:
+            continue  # a poor finite pairing is worse than staying unmatched
         score = round(min(1.0, max(0.0, 1.0 - cost[r, c] / 200.0)), 4)  # 0‥1
         assignments.append(
             {"load_index": int(r), "driver_index": int(c), "match_score": float(score)}
