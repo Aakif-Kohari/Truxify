@@ -138,12 +138,16 @@ class ABTestModel:
                 }
 
             is_better = self.is_shadow_better(results)
+            has_comparison = any(
+                values.get('production') is not None and values.get('shadow') is not None
+                for values in results.values()
+            )
 
             return {
                 'test_id': test_id,
                 'results': results,
                 'shadow_better': is_better,
-                'should_rollback': not is_better,
+                'should_rollback': has_comparison and not is_better,
                 'timestamp': datetime.utcnow().isoformat()
             }
         finally:
