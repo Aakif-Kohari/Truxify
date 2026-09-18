@@ -123,6 +123,20 @@ def _popularity_ranking(matrix: np.ndarray) -> np.ndarray:
     return np.argsort(-totals)
 
 
+TOP_N_MIN = 1
+TOP_N_MAX = 50
+
+
+def _validate_top_n(top_n: int) -> None:
+    """Reject invalid recommendation counts at the model boundary."""
+    if isinstance(top_n, bool) or not isinstance(top_n, int):
+        raise ValueError("top_n must be an integer between 1 and 50")
+    if top_n < TOP_N_MIN or top_n > TOP_N_MAX:
+        raise ValueError(
+            f"top_n must be between {TOP_N_MIN} and {TOP_N_MAX}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Main class
 # ---------------------------------------------------------------------------
@@ -261,6 +275,7 @@ class CollaborativeFilter:
         dict
             ``{"recommendations": [{entity_type + "_id": ..., "relevance_score": ...}, ...]}``
         """
+        _validate_top_n(top_n)
         idx = self._user_index(user_id)
 
         # The exclusion set must be built before the cold-start branch so
@@ -330,6 +345,7 @@ class CollaborativeFilter:
         dict
             ``recommendations`` – list of ``{load_id, relevance_score}``.
         """
+        _validate_top_n(top_n)
         self._ensure_loaded()
         return self._recommend(
             user_id, "load", self.load_ids, self._popular_loads,
@@ -358,6 +374,7 @@ class CollaborativeFilter:
         dict
             ``recommendations`` – list of ``{truck_id, relevance_score}``.
         """
+        _validate_top_n(top_n)
         self._ensure_loaded()
         return self._recommend(
             user_id, "truck", self.truck_ids, self._popular_trucks,
