@@ -168,6 +168,7 @@ def _pack_packages(
                 "package_index": idx,
                 "position": {"x": 0.0, "y": 0.0, "z": 0.0},
                 "rotated": False,
+                "orientation": None,
                 "fits": False,
             }
             unpacked.append(idx)
@@ -188,6 +189,7 @@ def _pack_packages(
                     "package_index": idx,
                     "position": {"x": round(pos["x"], 4), "y": round(pos["y"], 4), "z": round(pos["z"], 4)},
                     "rotated": pos["rotated"],
+                    "orientation": pos["orientation"],
                     "fits": True,
                 }
                 packed_weight += pkg_weight
@@ -217,6 +219,7 @@ def _pack_packages(
                     "package_index": idx,
                     "position": {"x": round(pos["x"], 4), "y": round(pos["y"], 4), "z": round(pos["z"], 4)},
                     "rotated": pos["rotated"],
+                    "orientation": pos["orientation"],
                     "fits": True,
                 }
                 packed_weight += pkg_weight
