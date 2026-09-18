@@ -184,7 +184,7 @@ describe('TrafficService Enterprise Test Suite (Issue #14108)', () => {
       expect(result).toBe(1.0);
     });
 
-it('falls back to heuristic when Google API throws network exception', async () => {
+    it('falls back to heuristic when Google API throws network exception', async () => {
       global.fetch.mockRejectedValueOnce(new Error('ECONNRESET'));
       
       const result = await trafficService.getLiveTrafficMultiplier(28.7, 77.1);
@@ -205,10 +205,11 @@ it('falls back to heuristic when Google API throws network exception', async () 
   });
 
   describe('Rush-Hour Heuristic (Fallback & Boundaries)', () => {
-    // Utility to mock system time to a specific UTC hour
-    const setMockUTCHour = (hour, minute = 0) => {
-      const d = new Date();
-      d.setUTCHours(hour, minute, 0, 0);
+    // Utility to mock system time to a specific IST hour
+    const setMockISTHour = (hour, minute = 0) => {
+      const d = new Date('2026-06-15T00:00:00.000Z');
+      const totalMinutes = hour * 60 + minute - 330;
+      d.setUTCHours(Math.floor(totalMinutes / 60), ((totalMinutes % 60) + 60) % 60, 0, 0);
       vi.setSystemTime(d);
     };
 
