@@ -38,7 +38,14 @@ router.get('/', authenticate, userLimiter, requirePolicy('demand:view-heatmap'),
       .limit(100);
 
     if (error) {
-      logger.error('Failed to fetch historical volume for heatmap:', error);
+      logger.error(
+          {
+              requestId: req.requestId,
+              event: 'DEMAND_HEATMAP_FETCH_ERROR',
+              error
+          },
+          'Failed to fetch historical volume for heatmap'
+      );
       return res.status(500).json({ error: 'Failed to fetch heatmap data.' });
     }
 
@@ -68,7 +75,14 @@ router.get('/', authenticate, userLimiter, requirePolicy('demand:view-heatmap'),
         nearby_drivers: 0,
       });
     } catch (mlErr) {
-      logger.warn('[DemandHeatmap] ML engine prediction failed, falling back to basic data:', mlErr?.message ?? String(mlErr));
+      logger.warn(
+        {
+            requestId: req.requestId,
+            event: 'ML_ENGINE_PREDICTION_FAILED',
+            mlErr
+        },
+        'ML engine prediction failed, falling back to basic data'
+    )
     }
 
     // Generate intelligent route recommendations and earnings potential based on ML predictions
@@ -132,8 +146,14 @@ router.get('/', authenticate, userLimiter, requirePolicy('demand:view-heatmap'),
     });
 
   } catch (err) {
-    logger.error('Internal Server Error in GET /api/demand-heatmap:', err);
-    res.status(500).json({ error: 'Internal Server Error' });
+    logger.error(
+        {
+            requestId: req.requestId,
+            event: 'DEMAND_HEATMAP_INTERNAL_ERROR',
+            error: err
+        },
+        'Internal Server Error in GET /api/demand-heatmap'
+    )
   }
 });
 
