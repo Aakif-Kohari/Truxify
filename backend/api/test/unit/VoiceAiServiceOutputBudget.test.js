@@ -43,7 +43,7 @@ beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-openai-key';
   process.env.ELEVENLABS_API_KEY = 'test-elevenlabs-key';
   process.env.VOICE_AI_MAX_OUTPUT_TOKENS = '120';
-  process.env.VOICE_AI_MAX_RESPONSE_CHARS = '20';
+  process.env.VOICE_AI_MAX_RESPONSE_CHARS = '100';
 
   const module = await import('../../src/services/voice/VoiceAiService.js');
   voiceAiService = module.default;
@@ -72,7 +72,7 @@ describe('VoiceAiService output budget', () => {
 
   it('blocks oversized LLM output before ElevenLabs is called', async () => {
     mocks.chatCompletion.mockResolvedValue({
-      choices: [{ message: { content: 'x'.repeat(21) } }],
+      choices: [{ message: { content: 'x'.repeat(101) } }],
     });
 
     await expect(
