@@ -21,6 +21,12 @@ from prompt_security import build_safe_mistral_prompt
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.1"
+PINNED_LLM_MODEL_REVISIONS = {
+    DEFAULT_LLM_MODEL: "464c09acb438a06c3a5eaafa25b90069df87efca",
+}
+
+
 class LLMService:
     """Custom LLM Service for Driver Support"""
     
@@ -28,7 +34,14 @@ class LLMService:
         self.redis = redis.Redis.from_url(redis_url)
         
         # Model configuration
-        self.model_name = os.getenv('LLM_MODEL', 'mistralai/Mistral-7B-Instruct-v0.1')
+        self.model_name = os.getenv('LLM_MODEL', DEFAULT_LLM_MODEL)
+        self.model_revision = PINNED_LLM_MODEL_REVISIONS.get(self.model_name)
+        if self.model_revision is None:
+            raise RuntimeError(
+                f"Unsupported LLM_MODEL '{self.model_name}'. "
+                "Configure an explicitly approved model revision."
+            )
+
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Initialize models
@@ -68,16 +81,19 @@ class LLMService:
             # Load tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
-                trust_remote_code=True
+                revision=self.model_revision,
+                trust_remote_code=False
             )
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
             # Load model
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
+                revision=self.model_revision,
                 quantization_config=bnb_config,
                 device_map="auto",
-                trust_remote_code=True
+                trust_remote_code=False,
+                use_safetensors=True
             )
             
             # Initialize embedder for RAG
