@@ -75,11 +75,46 @@ def _generate_synthetic_data() -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _prepare_svd_matrix(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Center observed ratings and represent missing interactions neutrally.
+
+    Zero-valued cells mean "no interaction", not an explicit zero rating.
+    Missing cells are therefore imputed with each user's observed mean before
+    centering. Users without observations fall back to the global observed
+    mean. The returned matrix is what the factorization sees, while the user
+    means are added back after reconstruction.
+    """
+    matrix = np.asarray(matrix, dtype=np.float64)
+    observed = matrix > 0
+
+    if matrix.ndim != 2:
+        raise ValueError("ratings matrix must be two-dimensional")
+
+    if not np.any(observed):
+        return np.zeros_like(matrix), np.zeros(matrix.shape[0], dtype=np.float64)
+
+    counts = observed.sum(axis=1)
+    sums = matrix.sum(axis=1)
+    global_mean = float(matrix[observed].mean())
+    user_means = np.divide(
+        sums,
+        counts,
+        out=np.full(matrix.shape[0], global_mean, dtype=np.float64),
+        where=counts > 0,
+    )
+
+    filled = np.where(observed, matrix, user_means[:, None])
+    centered = filled - user_means[:, None]
+    return centered, user_means
+
+
 def _svd_reconstruct(matrix: np.ndarray, k: int) -> np.ndarray:
-    """Return the rank-*k* approximation of *matrix* via truncated SVD."""
-    U, s, Vt = np.linalg.svd(matrix, full_matrices=False)
+    """Return a rank-*k* approximation using neutral treatment of missing ratings."""
+    centered, user_means = _prepare_svd_matrix(matrix)
+    U, s, Vt = np.linalg.svd(centered, full_matrices=False)
     k = min(k, len(s))
-    return (U[:, :k] * s[:k]) @ Vt[:k, :]
+    reconstructed = (U[:, :k] * s[:k]) @ Vt[:k, :]
+    return reconstructed + user_means[:, None]
 
 
 def _popularity_ranking(matrix: np.ndarray) -> np.ndarray:
