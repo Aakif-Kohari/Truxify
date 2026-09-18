@@ -148,6 +148,7 @@ class ABTestModel:
                 'results': results,
                 'shadow_better': is_better,
                 'should_rollback': has_comparison and not is_better,
+                'has_comparison': has_comparison,
                 'timestamp': datetime.utcnow().isoformat()
             }
         finally:
@@ -240,6 +241,14 @@ class ABTestModel:
     def trigger_rollback(self, test_id: str) -> Dict[str, Any]:
         """Auto-rollback to previous version if shadow model underperforms"""
         evaluation = self.evaluate_test(test_id)
+
+        if not evaluation.get('has_comparison', False):
+            return {
+                'action': 'insufficient_metrics',
+                'test_id': test_id,
+                'reason': 'Production and shadow metrics are not comparable',
+                'timestamp': datetime.utcnow().isoformat()
+            }
 
         if evaluation.get('should_rollback', False):
             restored = restore_previous_model(DEMAND_MODEL_NAME)
