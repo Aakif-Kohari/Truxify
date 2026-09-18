@@ -552,7 +552,7 @@ class WebRTCSignalingServer {
         !peer.location ||
         (requestingUser && requestingUser.role !== 'admin' &&
           !authorizedMeshIds.has(peer.meshId)) ||
-        peer.userId === requestingUser?.id
+        (requestingUser?.id && peer.userId === requestingUser.id)
       ) continue;
 
       const distance = this.calculateDistance(
