@@ -352,16 +352,14 @@ export async function getEscrowBooking(escrowBookingId) {
 }
 
 /**
- * Query the escrow contract's bookings mapping for a given booking ID.
+ * Query the on-chain escrow smart contract mapping.
  * Used by escrowFundingReconciliation and the release reconciler to check
  * the authoritative on-chain booking state.
- * Used by escrowFundingReconciliation and the payout amount checks to read
- * the authoritative on-chain state for a booking.
  *
  * @param {string} escrowBookingId — bytes32 hash (result of getEscrowBookingId)
  * @returns {Promise<{customer: string, driver: string, amount: bigint, status: number, paid: boolean, started: boolean, createdAt: bigint} | null>}
  */
-export async function getEscrowBooking(escrowBookingId) {
+export async function getOnChainEscrowBooking(escrowBookingId) {
   if (!escrowContract) {
     logger.warn('[escrow] Contract not initialised — cannot query bookings.');
     return null;
@@ -376,7 +374,7 @@ export async function getEscrowBooking(escrowBookingId) {
     const booking = await escrowContract.bookings(escrowBookingId);
     return booking;
   } catch (err) {
-    logger.error(`[escrow] getEscrowBooking failed: ${err?.message ?? String(err)}`);
+    logger.error(`[escrow] getOnChainEscrowBooking failed: ${err?.message ?? String(err)}`);
     return null;
   }
 }
