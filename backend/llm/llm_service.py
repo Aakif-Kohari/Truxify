@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.1"
 PINNED_LLM_MODEL_REVISIONS = {
-    DEFAULT_LLM_MODEL: "ec5deb64f2c6e6fa90c1abf74a91d5c93a9669ca",
+    DEFAULT_LLM_MODEL: "464c09acb438a06c3a5eaafa25b90069df87efca",
 }
 
 
