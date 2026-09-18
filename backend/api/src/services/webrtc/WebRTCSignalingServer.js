@@ -523,18 +523,22 @@ class WebRTCSignalingServer {
         throw error;
       }
 
-      const requestingPeer = Array.from(this.peers.values()).find(
+      const requestingPeers = Array.from(this.peers.values()).filter(
         (peer) =>
           peer.userId === requestingUser.id &&
+          peer.meshId &&
           peer.location &&
           this.isValidLocation(peer.location),
       );
 
-      if (!requestingPeer) {
+      if (requestingPeers.length === 0) {
         const error = new Error('An active location is required for nearby peer discovery');
         error.statusCode = 403;
         throw error;
       }
+
+      const authorizedMeshIds = new Set(requestingPeers.map((peer) => peer.meshId));
+      const requestingPeer = requestingPeers[0];
 
       searchLat = requestingPeer.location.lat;
       searchLng = requestingPeer.location.lng;
@@ -543,7 +547,12 @@ class WebRTCSignalingServer {
 
     const nearbyPeers = [];
     for (const [peerId, peer] of this.peers) {
-      if (peer.userId === requestingUser?.id || !peer.location) continue;
+      if (
+        !peer.location ||
+        (requestingUser && requestingUser.role !== 'admin' &&
+          !authorizedMeshIds.has(peer.meshId)) ||
+        peer.userId === requestingUser?.id
+      ) continue;
 
       const distance = this.calculateDistance(
         searchLat,
