@@ -36,7 +36,7 @@ def test_packing_reports_selected_axis_orientation_for_all_six_permutations():
 
         selected_dims = tuple(original_dims[i] for i in arrangement["orientation"])
         assert selected_dims == truck_dims
-        assert arrangement["rotated"] is (
+        assert arrangement["rotated"] == (
             arrangement["orientation"] != [0, 1, 2]
         )
 
