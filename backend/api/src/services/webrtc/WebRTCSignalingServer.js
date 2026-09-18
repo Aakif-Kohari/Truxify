@@ -281,28 +281,14 @@ class WebRTCSignalingServer {
       const targetPeer = this.peers.get(targetPeerId);
       if (!targetPeer || targetPeer.ws.readyState !== 1) continue;
 
-      let payloadLocation;
+      const payloadLocation = this.getDisclosedLocation(
+        sourceLoc || location,
+        targetPeer.location,
+        relayRadius,
+        maxRadius
+      );
 
-      if (sourceLoc && targetPeer.location && this.isValidLocation(targetPeer.location)) {
-        const distance = this.calculateDistance(
-          sourceLoc.lat,
-          sourceLoc.lng,
-          targetPeer.location.lat,
-          targetPeer.location.lng
-        );
-
-        if (distance <= relayRadius) {
-          payloadLocation = sourceLoc;
-        } else if (distance <= maxRadius) {
-          payloadLocation = this.capPrecision(sourceLoc, 2);
-        } else {
-          // Beyond max radius: drop
-          continue;
-        }
-      } else {
-        payloadLocation = this.capPrecision(sourceLoc || location, 2);
-      }
-
+      if (payloadLocation === null) continue;
       this.sendToPeer(targetPeerId, {
         type: 'peer-location',
         peerId,
@@ -333,6 +319,25 @@ class WebRTCSignalingServer {
         fromPeerId
       });
     }
+  }
+
+  getDisclosedLocation(sourceLocation, recipientLocation, relayRadius, maxRadius) {
+    if (!sourceLocation) return null;
+
+    if (recipientLocation && this.isValidLocation(recipientLocation) && this.isValidLocation(sourceLocation)) {
+      const distance = this.calculateDistance(
+        sourceLocation.lat,
+        sourceLocation.lng,
+        recipientLocation.lat,
+        recipientLocation.lng
+      );
+
+      if (distance <= relayRadius) return sourceLocation;
+      if (distance <= maxRadius) return this.capPrecision(sourceLocation, 2);
+      return null;
+    }
+
+    return this.capPrecision(sourceLocation, 2);
   }
 
   isValidLocation(location) {
@@ -447,9 +452,16 @@ class WebRTCSignalingServer {
       if (targetPeerId === peerId) continue;
       const targetPeer = this.peers.get(targetPeerId);
       if (targetPeer) {
+        const location = this.getDisclosedLocation(
+          targetPeer.location,
+          peer.location,
+          this.locationRelayRadius || 50,
+          this.maxRelayRadius || 200
+        );
+
         peerList.push({
           peerId: targetPeerId,
-          location: targetPeer.location,
+          ...(location ? { location } : {}),
           connectedAt: targetPeer.connectedAt
         });
       }
