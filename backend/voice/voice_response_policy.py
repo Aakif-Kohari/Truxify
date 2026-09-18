@@ -5,11 +5,11 @@ def safe_sensitive_response(intent: str, lang_name: str = "Hindi") -> Optional[s
     """Return a non-assertive response for sensitive intents until authoritative state is available."""
     responses = {
         "cancel_order": (
-            f"({lang_name}) I can’t confirm or complete order cancellation from this voice command "
+            "I can’t confirm or complete order cancellation from this voice command "
             "because no cancellation was performed."
         ),
         "payment_status": (
-            f"({lang_name}) I can’t confirm your payment status "
+            "I can’t confirm your payment status "
             "without checking the authoritative payment record."
         ),
     }
