@@ -332,6 +332,10 @@ describe('WebRTCSignalingServer', () => {
       addPeer(server, 'near-2', { location: { lat: 12.9810, lng: 77.6010 } });
       addPeer(server, 'near-3', { location: { lat: 12.9820, lng: 77.6020 } });
       addPeer(server, 'far-target', { location: { lat: 28.6139, lng: 77.2090 } });
+      addPeer(server, 'other-mesh-target', {
+        meshId: 'other-mesh',
+        location: { lat: 12.9800, lng: 77.6000 },
+      });
 
       const found = await server.getPeersNearLocation(28.6139, 77.2090, 500, {
         id: 'driver-1',
@@ -340,6 +344,7 @@ describe('WebRTCSignalingServer', () => {
 
       expect(found.map((peer) => peer.peerId).sort()).toEqual(['near-1', 'near-2', 'near-3']);
       expect(found.some((peer) => peer.peerId === 'far-target')).toBe(false);
+      expect(found.some((peer) => peer.peerId === 'other-mesh-target')).toBe(false);
     });
 
     it('requires an active location for non-admin discovery', async () => {
