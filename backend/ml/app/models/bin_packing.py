@@ -58,7 +58,6 @@ class _Shelf:
         width: float,
         height: float,
         max_height_limit: float | None = None,
-        orientation: List[int] | None = None,
     ) -> dict | None:
         """Attempt to place an item; return position dict or *None*."""
         # Try all six axis-aligned orientations so any package dimension can
@@ -87,6 +86,7 @@ class _Shelf:
         w: float,
         h: float,
         rotated: bool,
+        orientation: List[int] | None,
         max_height_limit: float | None = None,
     ) -> dict | None:
         # Determine effective vertical clearance. If an upper shelf exists above
