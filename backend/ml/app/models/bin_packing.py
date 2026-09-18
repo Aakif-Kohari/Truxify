@@ -143,7 +143,7 @@ def _pack_packages(
     if truck_volume <= 0 or max_weight <= 0:
         return (
             [{"package_index": i, "position": {"x": 0, "y": 0, "z": 0},
-              "rotated": False, "fits": False} for i in range(len(packages))],
+              "rotated": False, "orientation": None, "fits": False} for i in range(len(packages))],
             list(range(len(packages))),
             0.0,
         )
@@ -207,6 +207,7 @@ def _pack_packages(
                     "package_index": idx,
                     "position": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "rotated": False,
+                    "orientation": None,
                     "fits": False,
                 }
                 unpacked.append(idx)
@@ -230,6 +231,7 @@ def _pack_packages(
                     "package_index": idx,
                     "position": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "rotated": False,
+                    "orientation": None,
                     "fits": False,
                 }
                 unpacked.append(idx)
