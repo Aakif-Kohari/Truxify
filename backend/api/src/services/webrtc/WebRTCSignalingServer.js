@@ -515,6 +515,7 @@ class WebRTCSignalingServer {
     let searchLat = lat;
     let searchLng = lng;
     let searchRadius = radius;
+    let authorizedMeshIds = null;
 
     if (!isAdmin) {
       if (!requestingUser?.id) {
@@ -537,7 +538,7 @@ class WebRTCSignalingServer {
         throw error;
       }
 
-      const authorizedMeshIds = new Set(requestingPeers.map((peer) => peer.meshId));
+      authorizedMeshIds = new Set(requestingPeers.map((peer) => peer.meshId));
       const requestingPeer = requestingPeers[0];
 
       searchLat = requestingPeer.location.lat;
