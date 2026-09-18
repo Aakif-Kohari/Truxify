@@ -506,27 +506,69 @@ class WebRTCSignalingServer {
     this.wss.close();
   }
 
-  async getPeersNearLocation(lat, lng, radius = 10) {
+  async getPeersNearLocation(lat, lng, radius = 10, requestingUser) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       throw new TypeError('Latitude and longitude must be finite numbers');
     }
+
+    const isAdmin = requestingUser?.role === 'admin';
+    let searchLat = lat;
+    let searchLng = lng;
+    let searchRadius = radius;
+
+    if (!isAdmin) {
+      if (!requestingUser?.id) {
+        const error = new Error('Authenticated user identity is required');
+        error.statusCode = 403;
+        throw error;
+      }
+
+      const requestingPeer = Array.from(this.peers.values()).find(
+        (peer) =>
+          peer.userId === requestingUser.id &&
+          peer.location &&
+          this.isValidLocation(peer.location),
+      );
+
+      if (!requestingPeer) {
+        const error = new Error('An active location is required for nearby peer discovery');
+        error.statusCode = 403;
+        throw error;
+      }
+
+      searchLat = requestingPeer.location.lat;
+      searchLng = requestingPeer.location.lng;
+      searchRadius = 10;
+    }
+
     const nearbyPeers = [];
     for (const [peerId, peer] of this.peers) {
-      if (peer.location) {
-        const distance = this.calculateDistance(
-          lat, lng,
-          peer.location.lat, peer.location.lng
-        );
-        if (distance <= radius) {
-          nearbyPeers.push({
-            peerId,
-            location: peer.location,
-            distance
-          });
-        }
+      if (peer.userId === requestingUser?.id || !peer.location) continue;
+
+      const distance = this.calculateDistance(
+        searchLat,
+        searchLng,
+        peer.location.lat,
+        peer.location.lng,
+      );
+
+      if (distance <= searchRadius) {
+        nearbyPeers.push({
+          peerId,
+          location: peer.location,
+          distance,
+        });
       }
     }
-    return nearbyPeers;
+
+    if (isAdmin) return nearbyPeers;
+    if (nearbyPeers.length < 3) return [];
+
+    return nearbyPeers.map((peer) => ({
+      peerId: peer.peerId,
+      location: this.capPrecision(peer.location, 2),
+      distance: Math.round(peer.distance / 5) * 5,
+    }));
   }
 
   calculateDistance(lat1, lng1, lat2, lng2) {
