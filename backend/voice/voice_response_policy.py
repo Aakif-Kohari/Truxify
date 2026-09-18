@@ -9,8 +9,8 @@ def safe_sensitive_response(intent: str, lang_name: str = "Hindi") -> Optional[s
             "because no cancellation was performed."
         ),
         "payment_status": (
-            f"({lang_name}) I can’t confirm that your payment has been released "
-            "without checking the authoritative payment status."
+            f"({lang_name}) I can’t confirm your payment status "
+            "without checking the authoritative payment record."
         ),
     }
     return responses.get(intent)
