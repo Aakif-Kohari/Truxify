@@ -322,6 +322,8 @@ describe('WebRTCSignalingServer', () => {
     });
 
     it('ignores caller-supplied coordinates and radius for non-admin users', async () => {
+      server.peers.clear();
+      server.meshes.clear();
       addPeer(server, 'driver-self', {
         userId: 'driver-1',
         location: { lat: 12.9716, lng: 77.5946 },
@@ -341,6 +343,8 @@ describe('WebRTCSignalingServer', () => {
     });
 
     it('requires an active location for non-admin discovery', async () => {
+      server.peers.clear();
+      server.meshes.clear();
       addPeer(server, 'peer-1', { location: { lat: 12.98, lng: 77.60 } });
 
       await expect(
@@ -352,6 +356,8 @@ describe('WebRTCSignalingServer', () => {
     });
 
     it('requires an aggregation threshold before returning driver results', async () => {
+      server.peers.clear();
+      server.meshes.clear();
       addPeer(server, 'driver-self', {
         userId: 'driver-1',
         location: { lat: 12.9716, lng: 77.5946 },
@@ -368,6 +374,8 @@ describe('WebRTCSignalingServer', () => {
     });
 
     it('coarsens driver locations and buckets distances', async () => {
+      server.peers.clear();
+      server.meshes.clear();
       addPeer(server, 'driver-self', {
         userId: 'driver-1',
         location: { lat: 12.9716, lng: 77.5946 },
