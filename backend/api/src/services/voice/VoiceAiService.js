@@ -85,7 +85,7 @@ class VoiceAiService {
             'Content-Type': 'application/json',
           },
           responseType: 'stream',
-          timeout: 30000,
+          timeout: Number(process.env.VOICE_AI_TIMEOUT_MS) || 20000,
         }
       );
 
