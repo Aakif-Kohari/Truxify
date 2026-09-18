@@ -298,6 +298,12 @@ describe('WebRTCSignalingServer', () => {
       addPeer(server, 'no-location');
     });
 
+    it('does not treat a missing requester id as a peer identity match', async () => {
+      const found = await server.getPeersNearLocation(12.9716, 77.5946, 10, { role: 'admin' });
+
+      expect(found).toHaveLength(1);
+      expect(found[0].peerId).toBe('near');
+    });
     it('returns only peers inside the radius, with their distance', async () => {
       const found = await server.getPeersNearLocation(12.9716, 77.5946, 10, { role: 'admin' });
 
