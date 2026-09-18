@@ -103,6 +103,112 @@ _INFEASIBLE_THRESHOLD = 1e5
 _UNMATCHED_COST = 200.0
 
 
+def _validate_finite_value(
+    value: Any,
+    field_name: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    positive: bool = False,
+) -> float:
+    """Validate that a matching input is finite and within its allowed range."""
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a finite number") from exc
+
+    if not math.isfinite(numeric_value):
+        raise ValueError(f"{field_name} must be a finite number")
+    if positive and numeric_value <= 0:
+        raise ValueError(f"{field_name} must be greater than 0")
+    if minimum is not None and numeric_value < minimum:
+        raise ValueError(f"{field_name} must be at least {minimum}")
+    if maximum is not None and numeric_value > maximum:
+        raise ValueError(f"{field_name} must be at most {maximum}")
+
+    return numeric_value
+
+
+def _validate_bilateral_inputs(
+    loads: List[Dict[str, Any]],
+    drivers: List[Dict[str, Any]],
+) -> None:
+    """Validate direct matcher inputs before building the optimization matrix."""
+    load_ranges = {
+        "origin_lat": (-90.0, 90.0),
+        "origin_lng": (-180.0, 180.0),
+        "dest_lat": (-90.0, 90.0),
+        "dest_lng": (-180.0, 180.0),
+    }
+    load_positive_fields = (
+        "weight_kg",
+        "length_m",
+        "width_m",
+        "height_m",
+        "deadline_hours",
+    )
+    driver_ranges = {
+        "current_lat": (-90.0, 90.0),
+        "current_lng": (-180.0, 180.0),
+    }
+    driver_positive_fields = (
+        "max_weight_kg",
+        "max_length_m",
+        "max_width_m",
+        "max_height_m",
+    )
+
+    for load_index, load in enumerate(loads):
+        for field_name, (minimum, maximum) in load_ranges.items():
+            _validate_finite_value(
+                load.get(field_name),
+                f"loads[{load_index}].{field_name}",
+                minimum=minimum,
+                maximum=maximum,
+            )
+        for field_name in load_positive_fields:
+            _validate_finite_value(
+                load.get(field_name),
+                f"loads[{load_index}].{field_name}",
+                positive=True,
+            )
+
+    for driver_index, driver in enumerate(drivers):
+        for field_name, (minimum, maximum) in driver_ranges.items():
+            _validate_finite_value(
+                driver.get(field_name),
+                f"drivers[{driver_index}].{field_name}",
+                minimum=minimum,
+                maximum=maximum,
+            )
+        for field_name in driver_positive_fields:
+            _validate_finite_value(
+                driver.get(field_name),
+                f"drivers[{driver_index}].{field_name}",
+                positive=True,
+            )
+
+        _validate_finite_value(
+            driver.get("rating", 3.0),
+            f"drivers[{driver_index}].rating",
+            minimum=1.0,
+            maximum=5.0,
+        )
+
+        for field_name, (minimum, maximum) in {
+            "preferred_dest_lat": (-90.0, 90.0),
+            "preferred_dest_lng": (-180.0, 180.0),
+        }.items():
+            value = driver.get(field_name)
+            if value is not None:
+                _validate_finite_value(
+                    value,
+                    f"drivers[{driver_index}].{field_name}",
+                    minimum=minimum,
+                    maximum=maximum,
+                )
+
+
 def _distance_cost(driver: dict, load: dict) -> float:
     """Haversine distance from driver's current location to load origin."""
     return _haversine(
@@ -203,6 +309,8 @@ def match_bilateral(
         ``unmatched_loads``  – indices of loads without a match
         ``unmatched_drivers`` – indices of drivers without a match
     """
+    _validate_bilateral_inputs(loads, drivers)
+
     n_loads = len(loads)
     n_drivers = len(drivers)
 
