@@ -153,7 +153,6 @@ class LLMService:
                 'query': query,
                 'response': response_text,
                 'language': language,
-                'context_used': context,
                 'confidence': 0.95,
                 'timestamp': datetime.now().isoformat()
             }
