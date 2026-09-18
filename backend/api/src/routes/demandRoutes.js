@@ -82,7 +82,7 @@ router.get('/', authenticate, userLimiter, requirePolicy('demand:view-heatmap'),
             mlErr
         },
         'ML engine prediction failed, falling back to basic data'
-    )
+    );
     }
 
     // Generate intelligent route recommendations and earnings potential based on ML predictions
@@ -153,7 +153,8 @@ router.get('/', authenticate, userLimiter, requirePolicy('demand:view-heatmap'),
             error: err
         },
         'Internal Server Error in GET /api/demand-heatmap'
-    )
+    );
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
