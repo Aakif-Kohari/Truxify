@@ -1,4 +1,5 @@
 import math
+import re
 
 import pytest
 
@@ -40,7 +41,7 @@ def _valid_payload():
 def test_invalid_delivery_coordinates_fail_before_sequencing(address, expected_fragment):
     packages, truck = _valid_payload()
 
-    with pytest.raises(ValueError, match=expected_fragment):
+    with pytest.raises(ValueError, match=re.escape(expected_fragment)):
         optimise_packing(packages, truck, [address])
 
 
