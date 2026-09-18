@@ -256,6 +256,48 @@ describe('WebRTCSignalingServer', () => {
     it('is a no-op for an unknown peer', () => {
       expect(() => server.sendPeerList('nobody')).not.toThrow();
     });
+    
+    it('coarsens medium-distance peer locations using the relay precision policy', () => {
+      const ws = addPeer(server, 'peer-1', { location: { lat: 12.9716, lng: 77.5946 } });
+      addPeer(server, 'peer-2', { location: { lat: 12.2958, lng: 76.6394 } });
+
+      server.locationRelayRadius = 50;
+      server.maxRelayRadius = 200;
+      server.sendPeerList('peer-1');
+
+      const payload = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(payload.peers[0].location).toMatchObject({
+        lat: 12.3,
+        lng: 76.64,
+        precision: 'coarse',
+      });
+    });
+
+    it('omits peer location when the peer is beyond the maximum disclosure radius', () => {
+      const ws = addPeer(server, 'peer-1', { location: { lat: 12.9716, lng: 77.5946 } });
+      addPeer(server, 'peer-2', { location: { lat: 28.6139, lng: 77.2090 } });
+
+      server.locationRelayRadius = 50;
+      server.maxRelayRadius = 200;
+      server.sendPeerList('peer-1');
+
+      const payload = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(payload.peers[0]).not.toHaveProperty('location');
+    });
+
+    it('never includes exact target location when the recipient has no location', () => {
+      const ws = addPeer(server, 'peer-1', { location: null });
+      addPeer(server, 'peer-2', { location: { lat: 12.971598, lng: 77.594566 } });
+
+      server.sendPeerList('peer-1');
+
+      const payload = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(payload.peers[0].location).toMatchObject({
+        lat: 12.97,
+        lng: 77.59,
+        precision: 'coarse',
+      });
+    });
 
     it('skips mesh members whose peer record has already been removed', () => {
       const ws = addPeer(server, 'peer-1');
