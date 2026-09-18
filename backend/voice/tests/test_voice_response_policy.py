@@ -14,7 +14,7 @@ def test_payment_response_requires_authoritative_confirmation():
 
     assert response
     assert "payment status" in response.lower()
-    assert "can't confirm" in response.lower()
+    assert "can’t confirm" in response.lower()
     assert "authoritative payment record" in response.lower()
     assert "released" not in response.lower()
 
