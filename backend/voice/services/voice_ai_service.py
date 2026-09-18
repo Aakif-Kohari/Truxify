@@ -405,14 +405,13 @@ class VoiceAIService:
             'driver_location': 'आपका ड्राइवर आपके निकट है।'
         }
         
-        safe_response = safe_sensitive_response(intent['primary'], lang_name=transcription.get('language_name', 'Hindi'))
+        # Add language context
+        lang_name = transcription.get('language_name', 'Hindi')
+        safe_response = safe_sensitive_response(intent['primary'], lang_name=lang_name)
         response = safe_response or responses.get(
             intent['primary'],
             'कृपया अपनी बात दोहराएं। मुझे समझ नहीं आया।'
         )
-        
-        # Add language context
-        lang_name = transcription.get('language_name', 'Hindi')
         return f"({lang_name}) {response}"
     
     async def _log_interaction(self, user_id: str, data: Dict):
