@@ -22,10 +22,7 @@ const CACHE_TTL = 300; // 5 minutes caching for live traffic
  */
 export async function getLiveTrafficMultiplier(pickupLat, pickupLng) {
   try {
-    if (pickupLat == null || pickupLng == null) {
-      return 1.0;
-    }
-    if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) {
+    if (pickupLat == null || pickupLng == null || !Number.isFinite(pickupLat) || !Number.isFinite(pickupLng)) {
       return 1.0;
     }
 
