@@ -361,7 +361,7 @@ export async function getEscrowBooking(escrowBookingId) {
  * @param {string} escrowBookingId — bytes32 hash (result of getEscrowBookingId)
  * @returns {Promise<{customer: string, driver: string, amount: bigint, status: number, paid: boolean, started: boolean, createdAt: bigint} | null>}
  */
-export async function getEscrowBooking(escrowBookingId) {
+export async function getOnChainEscrowBooking(escrowBookingId) {
   if (!escrowContract) {
     logger.warn('[escrow] Contract not initialised — cannot query bookings.');
     return null;
