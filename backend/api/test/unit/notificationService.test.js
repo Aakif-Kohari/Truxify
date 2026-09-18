@@ -297,7 +297,7 @@ describe('notificationService', () => {
   });
 
   describe('sendDeliveryOtpNotification', () => {
-    it("only targets the customer's devices when delivering a delivery OTP", async () => {
+    it("only targets the customer's devices when delivering a delivery OTP and includes OTP in body and FCM payload", async () => {
       seedDevices([
         { id: 'cust-dev', user_id: 'customer-1', fcm_token: 'customer-token' },
         { id: 'other-dev', user_id: 'driver-9', fcm_token: 'driver-token' },
@@ -308,15 +308,21 @@ describe('notificationService', () => {
 
       expect(firebaseMock.sendEachForMulticast).toHaveBeenCalledTimes(1);
       expect(firebaseMock.sendEachForMulticast.mock.calls[0][0].tokens).toEqual(['customer-token']);
+      expect(firebaseMock.sendEachForMulticast.mock.calls[0][0].notification.body).toContain('123456');
+      expect(firebaseMock.sendEachForMulticast.mock.calls[0][0].data).toEqual({
+        orderDisplayId: 'ORD-1001',
+        notifType: 'delivery_otp',
+        otp: '123456',
+      });
       expect(result.success).toBe(true);
 
       const persisted = supabaseMock.store.notifications.find(
         (n) => n.user_id === 'customer-1'
       );
       expect(persisted).toBeTruthy();
-      expect(persisted.notif_type).toBe('order_update');
+      expect(persisted.notif_type).toBe('delivery_otp');
+      expect(persisted.body).toContain('123456');
       expect(persisted.metadata).toEqual({ order_display_id: 'ORD-1001' });
-      expect(JSON.stringify(persisted)).not.toContain('123456');
     });
   });
 
@@ -431,6 +437,7 @@ describe('notificationService', () => {
       'new_bid',
       'payment_locked',
       'payment_released',
+      'delivery_otp',
     ];
 
     it.each(VALID_TYPES)('accepts valid notif_type "%s"', async (notifType) => {
