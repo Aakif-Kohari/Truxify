@@ -74,15 +74,19 @@ class _Shelf:
     ) -> dict | None:
         """Attempt to place an item; return position dict or *None*."""
         orientations = [
-            (False, length, width, height),
-            (True, width, length, height),
-            (True, length, height, width),
-            (True, height, width, length),
-            (True, width, height, length),
-            (True, height, length, width),
+            # orientation values are original dimension axes in L/W/H order:
+            # 0=length, 1=width, 2=height.
+            ([0, 1, 2], False, length, width, height),
+            ([1, 0, 2], True, width, length, height),
+            ([0, 2, 1], True, length, height, width),
+            ([2, 1, 0], True, height, width, length),
+            ([1, 2, 0], True, width, height, length),
+            ([2, 0, 1], True, height, length, width),
         ]
-        for rotated, l, w, h in orientations:
-            pos = self._fit(l, w, h, rotated, max_height_limit)
+        for orientation, rotated, l, w, h in orientations:
+            pos = self._fit(
+                l, w, h, rotated, orientation, max_height_limit
+            )
             if pos is not None:
                 return pos
         return None
@@ -93,6 +97,7 @@ class _Shelf:
         w: float,
         h: float,
         rotated: bool,
+        orientation: List[int] | None,
         max_height_limit: float | None = None,
     ) -> dict | None:
         effective_max_height = (
@@ -107,8 +112,8 @@ class _Shelf:
             self.cursor_x += l
             self.row_height = max(self.row_height, w)
             self.shelf_height = max(self.shelf_height, h)
-            self.items.append({"pos": pos, "rotated": rotated})
-            return {**pos, "rotated": rotated}
+            self.items.append({"pos": pos, "rotated": rotated, "orientation": orientation})
+            return {**pos, "rotated": rotated, "orientation": orientation}
 
         new_y = self.cursor_y + self.row_height
         if new_y + w <= self.max_width and l <= self.max_length:
@@ -117,8 +122,8 @@ class _Shelf:
             self.row_height = w
             self.shelf_height = max(self.shelf_height, h)
             pos = {"x": 0.0, "y": new_y, "z": self.z_bottom}
-            self.items.append({"pos": pos, "rotated": rotated})
-            return {**pos, "rotated": rotated}
+            self.items.append({"pos": pos, "rotated": rotated, "orientation": orientation})
+            return {**pos, "rotated": rotated, "orientation": orientation}
 
         return None
 
@@ -140,7 +145,7 @@ def _pack_packages(
     if truck_volume <= 0 or max_weight <= 0:
         return (
             [{"package_index": i, "position": {"x": 0, "y": 0, "z": 0},
-              "rotated": False, "fits": False} for i in range(len(packages))],
+              "rotated": False, "orientation": None, "fits": False} for i in range(len(packages))],
             list(range(len(packages))),
             0.0,
         )
@@ -163,6 +168,7 @@ def _pack_packages(
                 "package_index": idx,
                 "position": {"x": 0.0, "y": 0.0, "z": 0.0},
                 "rotated": False,
+                "orientation": None,
                 "fits": False,
             }
             unpacked.append(idx)
@@ -181,6 +187,7 @@ def _pack_packages(
                     "package_index": idx,
                     "position": {"x": round(pos["x"], 4), "y": round(pos["y"], 4), "z": round(pos["z"], 4)},
                     "rotated": pos["rotated"],
+                    "orientation": pos["orientation"],
                     "fits": True,
                 }
                 packed_weight += pkg_weight
@@ -195,6 +202,7 @@ def _pack_packages(
                     "package_index": idx,
                     "position": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "rotated": False,
+                    "orientation": None,
                     "fits": False,
                 }
                 unpacked.append(idx)
@@ -207,6 +215,7 @@ def _pack_packages(
                     "package_index": idx,
                     "position": {"x": round(pos["x"], 4), "y": round(pos["y"], 4), "z": round(pos["z"], 4)},
                     "rotated": pos["rotated"],
+                    "orientation": pos["orientation"],
                     "fits": True,
                 }
                 packed_weight += pkg_weight
@@ -217,6 +226,7 @@ def _pack_packages(
                     "package_index": idx,
                     "position": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "rotated": False,
+                    "orientation": None,
                     "fits": False,
                 }
                 unpacked.append(idx)
