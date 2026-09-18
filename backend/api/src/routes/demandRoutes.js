@@ -6,8 +6,65 @@ import { userLimiter } from '../middleware/rateLimiter.js';
 import logger from '../middleware/logger.js';
 import { predictDemand } from '../services/ml.js';
 import { demandConfig } from '../config/demand.js';
+import { LoadOfferCacheService } from '../services/order/loadOfferCacheService.js';
 
 const router = express.Router();
+const buildDemandZones = (loads, maxZones = 50) => {
+  const regions = new Map();
+
+  for (const load of loads || []) {
+    const rawLat = load.pickup_lat;
+    const rawLng = load.pickup_lng;
+
+    if (rawLat === null || rawLat === undefined || String(rawLat).trim() === '' ||
+        rawLng === null || rawLng === undefined || String(rawLng).trim() === '') {
+      continue;
+    }
+
+    const lat = Number(rawLat);
+    const lng = Number(rawLng);
+
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 ||
+        !Number.isFinite(lng) || lng < -180 || lng > 180) {
+      continue;
+    }
+
+    const region = LoadOfferCacheService.getRegion(lat, lng);
+    if (region === 'global') continue;
+
+    const existing = regions.get(region);
+    if (existing) {
+      existing.count += 1;
+      existing.latSum += lat;
+      existing.lngSum += lng;
+    } else {
+      regions.set(region, {
+        count: 1,
+        latSum: lat,
+        lngSum: lng,
+        address: load.pickup_address,
+        status: load.status,
+      });
+    }
+  }
+
+  const zones = [...regions.entries()]
+    .sort(([, a], [, b]) => b.count - a.count)
+    .slice(0, maxZones);
+
+  const maxCount = zones[0]?.[1].count || 1;
+
+  return zones.map(([region, data]) => ({
+    region,
+    count: data.count,
+    lat: data.latSum / data.count,
+    lng: data.lngSum / data.count,
+    intensity: Number((data.count / maxCount).toFixed(2)),
+    label: data.address || `Demand Zone ${region}`,
+    status: data.status,
+  }));
+};
+
 
 // ============================================================================
 // 1. GET DEMAND HEATMAP
@@ -94,28 +151,23 @@ router.get('/', authenticate, userLimiter, requirePolicy('demand:view-heatmap'),
       { zone: 'Industrial Corridor Sector B', suggestedDrivers: 3, priority: 'MEDIUM', isMockData: true }
     ];
 
-    // 3. Construct GeoJSON
-    const features = (filteredLoads || []).map((load) => {
-      const lat = load.pickup_lat;
-      const lng = load.pickup_lng;
+    // 3. Construct GeoJSON from geographically aggregated demand zones.
+    const demandZones = buildDemandZones(filteredLoads);
 
-      if (lat === null || lng == null) {
-        return null;
+    const features = demandZones.map((zone) => ({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [zone.lng, zone.lat]
+      },
+      properties: {
+        intensity: zone.intensity,
+        demand_count: zone.count,
+        region: zone.region,
+        status: zone.status,
+        address: zone.label
       }
-
-      return {
-        type: "Feature",
-        geometry: {
-          type: "Point",
-          coordinates: [lng, lat]
-        },
-        properties: {
-          intensity: mlPrediction.predicted_demand || 0.5,
-          status: load.status,
-          address: load.pickup_address
-        }
-      };
-    }).filter(Boolean);
+    }));
 
     const geoJson = {
       type: "FeatureCollection",
@@ -181,3 +233,5 @@ export default router;
       // Fail-safe suppression for audit telemetry pipeline
     }
   }
+
+
