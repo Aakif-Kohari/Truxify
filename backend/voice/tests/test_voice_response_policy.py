@@ -13,9 +13,10 @@ def test_payment_response_requires_authoritative_confirmation():
     response = safe_sensitive_response("payment_status")
 
     assert response
-    assert "released" in response.lower()
+    assert "payment status" in response.lower()
     assert "can't confirm" in response.lower()
-    assert "without checking" in response.lower()
+    assert "authoritative payment record" in response.lower()
+    assert "released" not in response.lower()
 
 
 def test_non_sensitive_intents_are_not_overridden():
