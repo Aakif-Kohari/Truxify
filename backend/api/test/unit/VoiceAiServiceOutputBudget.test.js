@@ -15,18 +15,20 @@ vi.mock('fs', () => ({
 }));
 
 vi.mock('openai', () => ({
-  OpenAI: vi.fn(() => ({
-    audio: {
-      transcriptions: {
-        create: mocks.transcribe,
-      },
-    },
-    chat: {
-      completions: {
-        create: mocks.chatCompletion,
-      },
-    },
-  })),
+  OpenAI: class MockOpenAI {
+    constructor() {
+      this.audio = {
+        transcriptions: {
+          create: mocks.transcribe,
+        },
+      };
+      this.chat = {
+        completions: {
+          create: mocks.chatCompletion,
+        },
+      };
+    }
+  },
 }));
 
 vi.mock('axios', () => ({
