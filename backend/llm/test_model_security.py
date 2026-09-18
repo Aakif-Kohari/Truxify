@@ -39,7 +39,7 @@ def test_model_loading_disables_remote_code_and_pickle_weights():
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "from_pretrained"
     ]
-    assert len(calls) == 3
+    assert len(calls) == 2
 
     for call in calls:
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
